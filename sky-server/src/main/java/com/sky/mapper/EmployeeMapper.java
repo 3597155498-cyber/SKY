@@ -26,6 +26,15 @@ public interface EmployeeMapper {
             "values(#{name}, #{username}, #{password}, #{phone}, #{sex}, #{idNumber}, #{status}, #{createTime}, #{updateTime}, #{createUser}, #{updateUser})")
     void insertEmployee(Employee employee);
 
-    ///分页查询
+    /// 分页查询
     Page<Employee> pageQuery(EmployeePageQueryDTO employeePageQueryDTO);
+
+    /*
+     * 修改员工数据
+     * */
+    void update(Employee employee);
+
+    /*根据id查询员工信息*/
+    @Select("select  * from employee where id = #{id}")
+    Employee getById(Long id);
 }
