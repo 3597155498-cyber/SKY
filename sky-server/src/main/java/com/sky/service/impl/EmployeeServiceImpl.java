@@ -80,15 +80,15 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setStatus(StatusConstant.DISABLE);
         //3.设置密码  md5
         employee.setPassword(DigestUtils.md5DigestAsHex(PasswordConstant.DEFAULT_PASSWORD.getBytes()));  //默认密码123456
-        //4.设置当前记录时间
+       /* //4.设置当前记录时间
         employee.setCreateTime(LocalDateTime.now());
-        employee.setUpdateTime(LocalDateTime.now());
-        //5.设置操作人   暂时写死
+        employee.setUpdateTime(LocalDateTime.now());  已经设置AOP*/
+       /* //5.设置操作人   暂时写死
 
         System.out.println("当前线程id: " + Thread.currentThread().getId());
 
         employee.setCreateUser(BaseContext.getCurrentId());
-        employee.setUpdateUser(BaseContext.getCurrentId());
+        employee.setUpdateUser(BaseContext.getCurrentId());*/
 
         employeeMapper.insertEmployee(employee);
     }
@@ -134,10 +134,10 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee employee = new Employee();
         BeanUtils.copyProperties(employeeDTO,employee);
 
-        //时间 操作人 设置
+        /*//时间 操作人 设置
         employee.setUpdateTime(LocalDateTime.now());
         employee.setUpdateUser(BaseContext.getCurrentId());
-
+*/
         employeeMapper.update(employee);
     }
 }
