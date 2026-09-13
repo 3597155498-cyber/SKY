@@ -34,6 +34,15 @@ public interface AddressBookMapper {
     AddressBook getById(Long id);
 
     /**
+     * 根据id和用户id查询
+     * @param id
+     * @param userId
+     * @return
+     */
+    @Select("select * from address_book where id = #{id} and user_id = #{userId}")
+    AddressBook getByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
+
+    /**
      * 根据id修改
      * @param addressBook
      */
