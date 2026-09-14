@@ -28,7 +28,7 @@ public class OrderController {
     public Result<OrderSubmitVO> submit(@RequestBody OrdersSubmitDTO ordersSubmitDTO) {
         log.info("用户下单: {}", ordersSubmitDTO);
         OrderSubmitVO orderSubmitVO = orderService.submitOrder(ordersSubmitDTO);
-        return  Result.success(orderSubmitVO);
+        return Result.success(orderSubmitVO);
     }
 
     /**
@@ -45,6 +45,7 @@ public class OrderController {
         log.info("生成预支付交易单：{}", orderPaymentVO);
         return Result.success(orderPaymentVO);
     }
+
     /**
      * 历史订单查询
      */
@@ -85,4 +86,26 @@ public class OrderController {
         return Result.success();
     }
 
+    /*
+     * 催单
+     * */
+    @GetMapping("/reminder/{id}")
+    @ApiOperation("用户催单")
+    public Result reminder(@PathVariable("id") Long id) {
+        orderService.reminder(id);
+        return Result.success();
+    }
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
