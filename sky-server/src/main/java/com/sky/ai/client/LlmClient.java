@@ -60,7 +60,9 @@ public class LlmClient {
 
         String body = buildBody(systemPrompt, userPrompt, jsonMode);
         Exception lastError = null;
-        for (int attempt = 1; attempt <= 2; attempt++) {
+        int maxAttempts = 2;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            long attemptStart = System.currentTimeMillis();
             try {
                 String response = doPost(body);
                 JsonNode root = objectMapper.readTree(response);
@@ -75,7 +77,12 @@ public class LlmClient {
                         usedModel, System.currentTimeMillis() - start);
             } catch (Exception e) {
                 lastError = e;
-                log.warn("大模型调用失败, attempt={}, error={}", attempt, e.getMessage());
+                long cost = System.currentTimeMillis() - attemptStart;
+                log.warn("大模型调用失败, attempt={}, cost={}ms, error={}", attempt, cost, e.getMessage());
+                // 慢失败（已接近超时）不再重试，避免把接口延迟翻倍
+                if (cost > 2000L) {
+                    break;
+                }
             }
         }
         throw new AiUnavailableException("大模型不可用: " + (lastError == null ? "unknown" : lastError.getMessage()));

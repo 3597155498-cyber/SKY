@@ -55,7 +55,7 @@ sky:
     api-key: ${DEEPSEEK_API_KEY:}
     model: ${DEEPSEEK_MODEL:deepseek-chat}
     mock: ${AI_MOCK:false}
-    timeout-ms: 15000
+    timeout-ms: 6000
     rate-limit-per-hour: 10
     cache-ttl-minutes: 10
     max-items: 5

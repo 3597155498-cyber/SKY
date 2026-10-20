@@ -57,7 +57,14 @@ public class AiRecommendServiceImpl implements AiRecommendService {
                     + "excludeIngredients(忌口食材数组)、budgetPerPerson(人均预算整数)、people(人数整数)、"
                     + "category(荤菜/素菜/汤/主食/套餐/饮品 之一)、keyword(未能归类的关键词)。"
                     + "输入可能来自语音识别，含错别字、语气词、断句错误，请按餐饮语境推断最可能的含义；"
-                    + "实在无法判断的字段填 null，不要编造。";
+                    + "实在无法判断的字段填 null，不要编造。每个字段都要独立判断，不要因为解析出一个字段就省略其他字段。\n"
+                    + "示例1：{\"query\":\"两个人吃辣的，不超过60，不要香菜\"} -> "
+                    + "{\"spicy\":2,\"flavors\":[\"麻辣\"],\"excludeIngredients\":[\"香菜\"],\"budgetPerPerson\":60,\"people\":2,\"category\":null,\"keyword\":null}\n"
+                    + "示例2：{\"query\":\"来个宫爆鸡丁，不要香采\"} -> "
+                    + "{\"spicy\":null,\"flavors\":[],\"excludeIngredients\":[\"香菜\"],\"budgetPerPerson\":null,\"people\":null,\"category\":\"荤菜\",\"keyword\":\"宫保鸡丁\"}\n"
+                    + "示例3：{\"query\":\"随便\"} -> "
+                    + "{\"spicy\":null,\"flavors\":[],\"excludeIngredients\":[],\"budgetPerPerson\":null,\"people\":null,\"category\":null,\"keyword\":null}\n"
+                    + "注意：\"不超过60\"\"60以内\"\"预算60\" 都表示 budgetPerPerson=60，不要取一半或猜测。";
 
     private static final String REASON_SYSTEM_PROMPT =
             "你是餐厅服务员的推荐话术生成器。只输出 JSON：{\"items\":[{\"name\":\"菜名\",\"reason\":\"不超过20字的推荐理由\"}]}。"
@@ -150,7 +157,7 @@ public class AiRecommendServiceImpl implements AiRecommendService {
         }
 
         // 5、模型没解析出任何条件 → 视为没听懂，默认推荐
-        if (intent == null || intent.isEmpty()) {
+        if (intent == null || intent.isEmpty() || isKeywordOnly(intent)) {
             return finish(buildDefault(dto.getCategoryId(), AiConstant.MODE_DEFAULT, notUnderstood,
                     AiConstant.EMOTION_CONFUSED), cacheKey, intent, start);
         }
@@ -297,8 +304,6 @@ public class AiRecommendServiceImpl implements AiRecommendService {
             String want = spicyName(intent.getSpicy());
             if (spicyTags != null && spicyTags.contains(want)) {
                 score += 3;
-            } else if (intent.getSpicy() >= 2) {
-                score -= 1;
             }
         }
         List<String> flavorTags = tags.get("FLAVOR");
@@ -320,8 +325,35 @@ public class AiRecommendServiceImpl implements AiRecommendService {
         return score;
     }
 
-    private boolean hitExclude(Map<String, List<String>> tags, List<String> excludes) {
-        if (excludes == null || excludes.isEmpty()) {
+    /**
+     * 只解析出一个 keyword、其余条件全空：判定为"没听懂"，不要用无关关键词硬推荐
+     */
+    private boolean isKeywordOnly(AiIntent intent) {
+        boolean onlyKeyword = StringUtils.hasText(intent.getKeyword())
+                && intent.getSpicy() == null
+                && (intent.getFlavors() == null || intent.getFlavors().isEmpty())
+                && (intent.getExcludeIngredients() == null || intent.getExcludeIngredients().isEmpty())
+                && intent.getBudgetPerPerson() == null
+                && intent.getPeople() == null
+                && !StringUtils.hasText(intent.getCategory());
+        if (!onlyKeyword) {
+            return false;
+        }
+        Dish query = new Dish();
+        query.setStatus(StatusConstant.ENABLE);
+        List<Dish> dishes = dishMapper.list(query);
+        if (CollectionUtils.isEmpty(dishes)) {
+            return true;
+        }
+        for (Dish dish : dishes) {
+            if (dish.getName() != null && dish.getName().contains(intent.getKeyword())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean hitExclude(Map<String, List<String>> tags, List<String> excludes) {        if (excludes == null || excludes.isEmpty()) {
             return false;
         }
         List<String> ingredients = tags.get("INGREDIENT");
