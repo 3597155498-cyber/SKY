@@ -111,8 +111,14 @@ public interface OrderMapper {
                             @Param("deliveryTime") LocalDateTime deliveryTime);
 
     /**
-     * 按天聚合营业额（一次查询替代"每天查一次"）
+     * 按菜品 + 天聚合销量（仅统计已完成订单），供销量预测使用
      */
+    @Select("select od.name as name, date_format(o.order_time, '%Y-%m-%d') as d, sum(od.number) as qty " +
+            "from order_detail od join orders o on o.id = od.order_id " +
+            "where o.status = 5 and o.order_time between #{begin} and #{end} " +
+            "group by od.name, d")
+    List<Map<String, Object>> salesByDishByDay(@Param("begin") LocalDateTime begin,
+                                               @Param("end") LocalDateTime end);
     @Select("select date_format(order_time, '%Y-%m-%d') as d, sum(amount) as v from orders " +
             "where status = 5 and order_time between #{begin} and #{end} group by d")
     List<Map<String, Object>> sumTurnoverByDay(@Param("begin") LocalDateTime begin,
