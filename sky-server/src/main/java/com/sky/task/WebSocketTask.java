@@ -5,20 +5,23 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 
+/**
+ * WebSocket 心跳保活：每 30 秒发送一次 ping 帧，顺带清理已失效连接
+ */
 @Component
 @Slf4j
 public class WebSocketTask {
+
     @Autowired
     private WebSocketServer webSocketServer;
 
-    /**
-     * 通过WebSocket每隔5秒向客户端发送消息
-     */
-    @Scheduled(cron = "0/5 * * * * ?")
-    public void sendMessageToClient() {
-        webSocketServer.sendToAllClient("这是来自服务端的消息：" + DateTimeFormatter.ofPattern("HH:mm:ss").format(LocalDateTime.now()));
+    @Scheduled(fixedDelay = 30_000)
+    public void heartbeat() {
+        int count = webSocketServer.getSessionCount();
+        if (count > 0) {
+            webSocketServer.pingAll();
+            log.debug("WebSocket 心跳完成, 在线连接数={}", count);
+        }
     }
 }

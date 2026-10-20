@@ -5,6 +5,7 @@ import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.WebSocket.WebSocketServer;
 import com.sky.constant.MessageConstant;
+import com.sky.constant.OrderTimeoutConstant;
 import com.sky.constant.StockBizType;
 import com.sky.context.BaseContext;
 import com.sky.dto.OrdersCancelDTO;
@@ -35,6 +36,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -47,6 +49,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -84,6 +87,9 @@ public class OrderServiceImpl implements OrderService {
 
     @Autowired
     private RedisTemplate redisTemplate;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     /**
      * 用户下单
@@ -171,6 +177,9 @@ public class OrderServiceImpl implements OrderService {
 
         //7、清空当前用户的购物车数据
         shoppingCartMapper.deleteByUserId(userId);
+
+        //8、事务提交后进入超时延迟队列（回滚则不入队）
+        scheduleTimeout(orders);
 
         return buildSubmitVO(orders);
     }
@@ -541,6 +550,29 @@ public class OrderServiceImpl implements OrderService {
                 }
             }
         });
+    }
+
+    /**
+     * 事务提交后把订单放入 Redis ZSet 延迟队列；回滚则不入队，避免产生指向不存在订单的脏数据
+     */
+    private void scheduleTimeout(Orders orders) {
+        String member = String.valueOf(orders.getId());
+        long score = orders.getOrderTime()
+                .plusMinutes(OrderTimeoutConstant.TIMEOUT_MINUTES)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    stringRedisTemplate.opsForZSet()
+                            .add(OrderTimeoutConstant.TIMEOUT_ZSET_KEY, member, score);
+                }
+            });
+        } else {
+            stringRedisTemplate.opsForZSet().add(OrderTimeoutConstant.TIMEOUT_ZSET_KEY, member, score);
+        }
     }
 
     private void refund(Orders orders) throws Exception {

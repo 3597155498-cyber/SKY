@@ -7,6 +7,7 @@ import com.sky.entity.Orders;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -80,6 +81,21 @@ public interface OrderMapper {
      * */
     @Select("select  *  from orders where  status = #{status} and order_time < #{orderTime}")
     List<Orders> getByStatusAndOrderTimeLT(Integer status, LocalDateTime orderTime);
+
+    /**
+     * 超时取消订单：仅当订单仍处于待付款(1)时生效。
+     * 条件更新保证"用户刚支付"与"超时取消"并发时不会互相覆盖。
+     *
+     * @param id           订单id
+     * @param cancelReason 取消原因
+     * @param cancelTime   取消时间
+     * @return 影响行数，0 表示状态已变更
+     */
+    @Update("update orders set status = 6, cancel_reason = #{cancelReason}, cancel_time = #{cancelTime} " +
+            "where id = #{id} and status = 1")
+    int cancelTimeoutOrder(@Param("id") Long id,
+                           @Param("cancelReason") String cancelReason,
+                           @Param("cancelTime") LocalDateTime cancelTime);
 
     //动态统计营业额
     Double sumByMap(Map map);
