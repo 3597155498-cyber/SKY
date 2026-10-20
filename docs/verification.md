@@ -191,3 +191,55 @@ PASS  T09 duplicate confirm rejected: 0
 > `HttpMessageNotReadableException`，请求体畸形时只回一个空 400；现已统一返回 `{"code":0,"msg":"请求参数格式错误"}`。
 > 教训：验证脚本里的 HTTP 客户端本身也要可信，用 `Invoke-RestMethod` 或
 > `[System.Net.Http.StringContent]::new(...)`，不要用 `New-Object StringContent(...)`。
+---
+
+## T10/T11 AI 能力
+
+### 环境与模型
+
+- 模型：DeepSeek `deepseek-chat`（OpenAI 兼容 `/chat/completions`），Key 走环境变量 `DEEPSEEK_API_KEY`
+- 注意：`Start-Process` 启动的 java 进程**不继承**用户级环境变量，启动时需在当前会话显式 `$env:DEEPSEEK_API_KEY=...`
+
+### 接口
+
+| 接口 | 说明 |
+|---|---|
+| `POST /user/ai/recommendSync` | 同步推荐（验证脚本与 Knife4j 使用） |
+| `POST /user/ai/recommend` | SSE 事件流（事件级，非 token 级） |
+| `GET /user/ai/status` | 模型、熔断、今日调用与 token |
+| `POST /admin/ai/tag/refresh` | 菜品打标（离线批处理，可重跑） |
+
+### 打标结果
+
+24 道菜 → 80 条标签（SPICY/FLAVOR/INGREDIENT）。人工抽查 24 条，辣度 19/24 正确；
+主要偏差是「酸菜」类被标成 `酸甜`（应为酸辣），对推荐排序影响有限（辣度维度可兜住）。
+
+### 意图解析评测（200 条：170 标准 + 30 脏输入）
+
+```
+整体准确率(4字段全对): 95.5%
+  标准集         : 100%
+  脏输入集       : 70%
+字段级(全体)    : spicy=96%  people=100%  budget=100%  exclude=99.5%
+字段级(脏输入)  : spicy=73.33%  people=100%  budget=100%  exclude=96.67%
+```
+
+脏输入失败样本人工复核后，多数属于**标注口径问题而非模型错误**：
+
+- `"嗯 就是 想吃辣的 不要聪"` → 模型给 spicy=2，标注写 null（标注错）；同时正确纠正「聪→葱」
+- `"我要个那个水煮鱼 两个人"` → 模型给 spicy=2，标注写 null（水煮类推为辣是合理的）
+- `"不迟香菜 来点轻淡的"` → 模型给 flavors=[清淡]，标注期望 spicy=0（`清淡→辣度0` 的映射本身有歧义）
+- 模型还正确完成了「香采→香菜」「六十→60」「两各人→2人」的纠错
+
+### 性能
+
+- 单次推荐：解析 ~2.5s + 理由 ~2.5s ≈ 5s（真实模型）
+- 超时策略：socket 6s、慢失败不重试（>2s 不重试），超时即降级，接口不 500
+- 空输入：`mode=DEFAULT`、15ms、0 成本
+- 成本：`ai_call_log` 记录 token；评测 200 条约 20 万 token
+
+### 踩过的坑（验证脚本侧，非服务端缺陷）
+
+1. PowerShell 5.1 `Invoke-RestMethod -Body '字符串'` 会用非 UTF-8 编码发送，中文被丢 → 必须传 UTF-8 字节
+2. `Invoke-RestMethod` 解析响应时按 ANSI 解码，中文变乱码 → 用 `Invoke-WebRequest` + `RawContentStream` 自行 UTF-8 解码
+3. 脚本文件必须带 **UTF-8 BOM**，否则 PS 5.1 按 ANSI 读导致中文语法错误
