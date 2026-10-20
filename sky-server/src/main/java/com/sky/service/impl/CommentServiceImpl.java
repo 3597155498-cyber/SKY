@@ -203,6 +203,7 @@ public class CommentServiceImpl implements CommentService {
         result.put("topThemes", topThemes);
         result.put("summary", buildSummary(total, negative, topThemes));
         result.put("analyzed", analyses.size());
+        result.put("trend", commentMapper.dailyTrend(beginTime, endTime));
 
         try {
             stringRedisTemplate.opsForValue().set(cacheKey, objectMapper.writeValueAsString(result),

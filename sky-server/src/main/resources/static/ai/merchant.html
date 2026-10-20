@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>商家经营看板 · 小天</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:#080b14;color:#e8ecf5;min-height:100vh;overflow-x:hidden;position:relative;
+  }
+  /* 流动极光背景 */
+  .aurora{position:fixed;inset:-30%;z-index:0;filter:blur(70px);opacity:.55;
+    background:
+      radial-gradient(38% 42% at 22% 28%, #ff6b3d 0%, transparent 60%),
+      radial-gradient(34% 38% at 78% 24%, #3d8bff 0%, transparent 62%),
+      radial-gradient(40% 44% at 60% 82%, #8b5cf6 0%, transparent 60%),
+      radial-gradient(30% 34% at 15% 80%, #22d3a6 0%, transparent 60%);
+    background-size:200% 200%;
+    animation:flow 22s ease-in-out infinite;
+  }
+  @keyframes flow{
+    0%{background-position:0% 0%;transform:translate3d(0,0,0) scale(1)}
+    33%{background-position:60% 40%;transform:translate3d(2%,-2%,0) scale(1.06)}
+    66%{background-position:100% 60%;transform:translate3d(-2%,2%,0) scale(1.03)}
+    100%{background-position:0% 0%;transform:translate3d(0,0,0) scale(1)}
+  }
+  /* 细密流动网格 */
+  .grid{position:fixed;inset:0;z-index:0;opacity:.16;
+    background-image:linear-gradient(rgba(120,160,255,.25) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(120,160,255,.25) 1px,transparent 1px);
+    background-size:44px 44px;
+    animation:gridmove 18s linear infinite;
+    mask-image:radial-gradient(circle at 50% 40%,#000 30%,transparent 78%);
+    -webkit-mask-image:radial-gradient(circle at 50% 40%,#000 30%,transparent 78%);
+  }
+  @keyframes gridmove{from{background-position:0 0,0 0}to{background-position:44px 44px,44px 44px}}
+  .wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+  h1{font-size:24px;letter-spacing:.5px;background:linear-gradient(90deg,#ffb08a,#8fb8ff,#a78bfa,#ffb08a);
+     background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+     animation:shimmer 8s linear infinite}
+  @keyframes shimmer{to{background-position:300% 0}}
+  .sub{font-size:12px;color:#7f8ba3;margin-top:6px}
+  .actions{display:flex;gap:10px;align-items:center}
+  button{cursor:pointer;border:0;border-radius:10px;padding:9px 16px;font-size:13px;font-weight:600;
+    color:#0b0f18;background:linear-gradient(90deg,#ffb08a,#ff7a45);transition:transform .15s,box-shadow .2s}
+  button:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(255,122,69,.35)}
+  button.ghost{background:rgba(255,255,255,.08);color:#cfd8ea}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px}
+  .card{background:rgba(18,24,38,.72);border:1px solid rgba(120,150,220,.18);border-radius:16px;
+        padding:16px 18px;backdrop-filter:blur(10px);position:relative;overflow:hidden;
+        animation:float 6s ease-in-out infinite}
+  .card:nth-child(2){animation-delay:.6s}
+  .card:nth-child(3){animation-delay:1.2s}
+  .card:nth-child(4){animation-delay:1.8s}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  .card:after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.07) 50%,transparent 70%);
+    transform:translateX(-100%);animation:sweep 5s ease-in-out infinite}
+  @keyframes sweep{0%,60%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+  .label{font-size:12px;color:#8693ab;margin-bottom:8px}
+  .value{font-size:30px;font-weight:700;letter-spacing:.5px}
+  .value small{font-size:13px;color:#8693ab;font-weight:500;margin-left:4px}
+  .up{color:#ff7a45}.down{color:#22d3a6}
+  .panel{background:rgba(18,24,38,.72);border:1px solid rgba(120,150,220,.18);border-radius:18px;
+         padding:20px;backdrop-filter:blur(10px);margin-bottom:18px}
+  .panel h2{font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  .panel h2 .dot{width:7px;height:7px;border-radius:50%;background:#ff7a45;box-shadow:0 0 12px #ff7a45;animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+  .bars{display:flex;flex-direction:column;gap:14px}
+  .bar-row{display:grid;grid-template-columns:56px 1fr 92px;gap:12px;align-items:center}
+  .bar-name{font-size:13px;color:#cfd8ea}
+  .track{height:14px;border-radius:8px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+  .fill{height:100%;width:0;border-radius:8px;position:relative;transition:width 1.2s cubic-bezier(.22,1,.36,1);
+        background:linear-gradient(90deg,#ff7a45,#ffb08a,#a78bfa);background-size:200% 100%;
+        animation:flowbar 3s linear infinite}
+  @keyframes flowbar{to{background-position:200% 0}}
+  .fill:after{content:"";position:absolute;top:0;left:-40%;width:40%;height:100%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:shine 2.4s infinite}
+  @keyframes shine{to{left:120%}}
+  .bar-val{font-size:12px;color:#8693ab;text-align:right}
+  .bar-val b{color:#e8ecf5;font-size:14px}
+  svg.chart{width:100%;height:190px;display:block;overflow:visible}
+  .line{fill:none;stroke:url(#lg);stroke-width:2.4;stroke-linecap:round;
+        stroke-dasharray:2000;stroke-dashoffset:2000;animation:draw 2.2s ease forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  .area{fill:url(#ag);opacity:0;animation:fadein 1.4s .6s ease forwards}
+  @keyframes fadein{to{opacity:1}}
+  .dot{fill:#ffb08a;opacity:0;animation:fadein .6s ease forwards}
+  .summary{font-size:14px;line-height:1.9;color:#c8d2e6;min-height:56px}
+  .cursor{display:inline-block;width:8px;height:16px;background:#ff7a45;vertical-align:-2px;animation:blink .9s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .foot{font-size:11px;color:#5f6b80;text-align:center;margin-top:8px}
+  .tag{font-size:11px;padding:2px 8px;border-radius:8px;background:rgba(255,122,69,.14);color:#ffb08a;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="aurora"></div><div class="grid"></div>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>商家经营看板</h1>
+      <div class="sub" id="sub">近 30 天 · 加载中…</div>
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="load(true)">刷新数据</button>
+      <button onclick="invalidate()">重算缓存</button>
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="card"><div class="label">评价总数</div><div class="value" id="kTotal">0</div></div>
+    <div class="card"><div class="label">平均评分</div><div class="value" id="kScore">0<small>/5</small></div></div>
+    <div class="card"><div class="label">差评数</div><div class="value up" id="kNeg">0</div></div>
+    <div class="card"><div class="label">差评率</div><div class="value up" id="kRate">0<small>%</small></div></div>
+  </div>
+
+  <div class="panel">
+    <h2><span class="dot"></span>差评主题分布<span class="tag" id="tagAnalyzed">已分析 0 条</span></h2>
+    <div class="bars" id="bars"></div>
+  </div>
+
+  <div class="panel">
+    <h2><span class="dot"></span>评价趋势（按天）</h2>
+    <svg class="chart" id="chart" viewBox="0 0 800 190" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#22d3a6"/><stop offset="55%" stop-color="#8fb8ff"/><stop offset="100%" stop-color="#ff7a45"/>
+        </linearGradient>
+        <linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="rgba(143,184,255,.35)"/><stop offset="100%" stop-color="rgba(143,184,255,0)"/>
+        </linearGradient>
+      </defs>
+      <path class="area" id="area" d=""></path>
+      <path class="line" id="line" d=""></path>
+      <g id="dots"></g>
+    </svg>
+  </div>
+
+  <div class="panel">
+    <h2><span class="dot"></span>本周建议（AI 生成）</h2>
+    <div class="summary" id="summary"></div>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+const API = '';
+let token = null;
+
+function fmtDate(d){ const p=n=>String(n).padStart(2,'0'); return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function countUp(el, target, suffix){
+  const start = 0, dur = 900, t0 = performance.now();
+  const isFloat = !Number.isInteger(target);
+  function step(now){
+    const p = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const v = start + (target - start) * eased;
+    el.innerHTML = (isFloat ? v.toFixed(2) : Math.round(v)) + (suffix || '');
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+function login(cb){
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/admin/employee/login', true);
+  xhr.setRequestHeader('Content-Type','application/json; charset=utf-8');
+  xhr.onreadystatechange = function(){
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200){ token = JSON.parse(xhr.responseText).data.token; cb(); }
+    else { document.getElementById('sub').textContent = '登录失败，请刷新'; }
+  };
+  xhr.send(JSON.stringify({username:'admin', password:'123456'}));
+}
+function invalidate(){
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/admin/comment/insight/refresh', true);
+  xhr.setRequestHeader('token', token || '');
+  xhr.onreadystatechange = function(){
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200){ load(true); }
+  };
+  xhr.send();
+}
+function load(force){
+  const end = new Date(); const begin = new Date(); begin.setDate(end.getDate() - 29);
+  const url = API + '/admin/comment/insight?begin=' + fmtDate(begin) + '&end=' + fmtDate(end);
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', url, true);
+  xhr.setRequestHeader('token', token || '');
+  xhr.onreadystatechange = function(){
+    if (xhr.readyState !== 4) return;
+    if (xhr.status !== 200){ document.getElementById('sub').textContent = '数据加载失败'; return; }
+    render(JSON.parse(xhr.responseText).data);
+  };
+  xhr.send();
+}
+function render(d){
+  document.getElementById('sub').textContent = d.begin + ' ~ ' + d.end + ' · 共 ' + d.totalComments + ' 条评价';
+  document.getElementById('tagAnalyzed').textContent = '已分析 ' + d.analyzed + ' 条';
+  countUp(document.getElementById('kTotal'), d.totalComments, '');
+  countUp(document.getElementById('kScore'), d.avgScore, '<small>/5</small>');
+  countUp(document.getElementById('kNeg'), d.negativeCount, '');
+  countUp(document.getElementById('kRate'), d.negativeRate, '<small>%</small>');
+
+  const bars = document.getElementById('bars'); bars.innerHTML = '';
+  const themes = d.topThemes || [];
+  const max = themes.length ? themes[0].count : 1;
+  themes.forEach((t, i) => {
+    const row = document.createElement('div'); row.className = 'bar-row';
+    row.innerHTML = '<div class="bar-name">' + t.theme + '</div>' +
+      '<div class="track"><div class="fill"></div></div>' +
+      '<div class="bar-val"><b>' + t.count + '</b> 条 · ' + t.ratio + '%</div>';
+    bars.appendChild(row);
+    const fill = row.querySelector('.fill');
+    setTimeout(() => { fill.style.width = Math.max(6, Math.round(100 * t.count / max)) + '%'; }, 60 * i);
+  });
+
+  drawTrend(d.trend || []);
+
+  const summary = d.summary || '';
+  const el = document.getElementById('summary'); el.innerHTML = '';
+  let i = 0;
+  (function type(){ if (i <= summary.length){ el.innerHTML = summary.slice(0, i) + '<span class="cursor"></span>'; i++; setTimeout(type, 26); } })();
+
+  document.getElementById('foot').textContent = '数据每 60 秒自动刷新 · 最后一次 ' + new Date().toLocaleTimeString();
+}
+function drawTrend(trend){
+  const W = 800, H = 190, pad = 10;
+  const line = document.getElementById('line'), area = document.getElementById('area'), dots = document.getElementById('dots');
+  if (!trend.length){ line.setAttribute('d',''); area.setAttribute('d',''); dots.innerHTML=''; return; }
+  const max = Math.max.apply(null, trend.map(t => Number(t.total))) || 1;
+  const stepX = trend.length > 1 ? (W - pad*2) / (trend.length - 1) : 0;
+  const pts = trend.map((t, i) => {
+    const x = pad + stepX * i;
+    const y = H - pad - (Number(t.total) / max) * (H - pad*2);
+    return [x, y, t];
+  });
+  let d = '';
+  pts.forEach((p, i) => { d += (i ? ' L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); });
+  line.setAttribute('d', d);
+  area.setAttribute('d', d + ' L' + pts[pts.length-1][0].toFixed(1) + ' ' + (H-pad) + ' L' + pts[0][0].toFixed(1) + ' ' + (H-pad) + ' Z');
+  line.style.animation = 'none'; void line.offsetWidth; line.style.animation = '';
+  dots.innerHTML = '';
+  pts.forEach((p, i) => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r', 3.2);
+    c.setAttribute('class','dot'); c.style.animationDelay = (0.6 + i*0.03) + 's';
+    const title = document.createElementNS('http://www.w3.org/2000/svg','title');
+    title.textContent = p[2].date + '：' + p[2].total + ' 条，差评 ' + p[2].negative;
+    c.appendChild(title); dots.appendChild(c);
+  });
+}
+login(function(){ load(); setInterval(function(){ load(); }, 60000); });
+</script>
+</body>
+</html>

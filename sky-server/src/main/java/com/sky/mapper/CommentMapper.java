@@ -39,4 +39,14 @@ public interface CommentMapper {
 
     @Select("select count(*) from comment")
     Integer countAll();
+
+    /**
+     * 按天聚合评价趋势：总数与差评数，供看板画曲线
+     */
+    @Select("select date_format(c.create_time, '%Y-%m-%d') as d, count(*) as total, " +
+            "ifnull(sum(case when a.sentiment = 'NEGATIVE' then 1 else 0 end), 0) as negative " +
+            "from comment c left join comment_analysis a on a.comment_id = c.id " +
+            "where c.create_time between #{begin} and #{end} group by d order by d")
+    java.util.List<java.util.Map<String, Object>> dailyTrend(@Param("begin") LocalDateTime begin,
+                                                             @Param("end") LocalDateTime end);
 }
