@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>小天 · 扫码点餐</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f6f7fb; color:#222; display:flex; justify-content:center; }
+  .phone { width:100%; max-width:430px; min-height:100vh; background:#fff; display:flex; flex-direction:column; }
+  header { padding:14px 16px; background:linear-gradient(135deg,#ff8a3d,#ff5f6d); color:#fff; }
+  header h1 { margin:0; font-size:17px; font-weight:600; }
+  header p { margin:4px 0 0; font-size:12px; opacity:.9; }
+  .stage { padding:18px 16px 8px; display:flex; align-items:flex-start; gap:12px; }
+  .avatar { width:76px; height:76px; border-radius:50%; background:#fff3e8; display:flex; align-items:center; justify-content:center;
+            font-size:40px; flex:0 0 76px; box-shadow:0 4px 14px rgba(255,120,60,.22); transition:transform .2s; }
+  .avatar.thinking { animation:bounce 1s infinite; }
+  .avatar.happy { animation:pop .45s ease; }
+  .avatar.confused { animation:shake .5s ease; }
+  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+  @keyframes pop { 0%{transform:scale(.9)} 60%{transform:scale(1.08)} 100%{transform:scale(1)} }
+  @keyframes shake { 0%,100%{transform:rotate(0)} 25%{transform:rotate(-6deg)} 75%{transform:rotate(6deg)} }
+  .bubble { position:relative; background:#f1f3f8; border-radius:14px; padding:12px 14px; font-size:14px; line-height:1.6; flex:1; min-height:52px; }
+  .bubble:before { content:""; position:absolute; left:-7px; top:16px; border:7px solid transparent; border-right-color:#f1f3f8; border-left:0; }
+  .name { font-size:12px; color:#ff6b3d; margin-bottom:4px; font-weight:600; }
+  .inputbar { position:sticky; bottom:0; background:#fff; border-top:1px solid #eef0f4; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); display:flex; gap:8px; }
+  .inputbar input { flex:1; border:1px solid #e3e6ec; border-radius:22px; padding:11px 15px; font-size:14px; outline:none; }
+  .inputbar input:focus { border-color:#ff8a3d; }
+  .btn { border:0; border-radius:22px; padding:0 18px; font-size:14px; color:#fff; background:#ff6b3d; font-weight:600; }
+  .btn:disabled { opacity:.5; }
+  .btn.voice { background:#fff; color:#ff6b3d; border:1px solid #ffb18d; width:46px; padding:0; font-size:18px; }
+  .chips { padding:0 16px 10px; display:flex; gap:8px; overflow-x:auto; }
+  .chip { white-space:nowrap; font-size:12px; padding:6px 12px; border-radius:14px; background:#f1f3f8; color:#555; }
+  .list { padding:0 16px 90px; }
+  .card { display:flex; gap:12px; padding:12px; border:1px solid #eef0f4; border-radius:14px; margin-bottom:10px; background:#fff; }
+  .card .emoji { width:48px; height:48px; border-radius:12px; background:#fff7f0; display:flex; align-items:center; justify-content:center; font-size:24px; flex:0 0 48px; }
+  .card .body { flex:1; min-width:0; }
+  .card h3 { margin:0 0 4px; font-size:15px; }
+  .card .reason { font-size:12px; color:#777; line-height:1.5; }
+  .card .row { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+  .price { color:#ff5f2e; font-weight:700; font-size:15px; }
+  .add { border:0; background:#ffece2; color:#ff5f2e; border-radius:16px; padding:6px 14px; font-size:13px; font-weight:600; }
+  .meta { padding:0 16px 8px; font-size:11px; color:#9aa0ab; }
+  .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); background:rgba(0,0,0,.78); color:#fff; padding:8px 16px; border-radius:18px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <h1>扫码点餐 · 小天</h1>
+    <p>A03 桌 · 直接说想吃什么，我帮你挑</p>
+  </header>
+
+  <div class="stage">
+    <div class="avatar" id="avatar">🐱</div>
+    <div class="bubble">
+      <div class="name">小天</div>
+      <div id="speech">想吃点什么？告诉我想吃辣还是清淡、几个人、预算多少～</div>
+    </div>
+  </div>
+
+  <div class="chips">
+    <div class="chip" onclick="ask('两人吃辣的 不超过60 不要香菜')">两人吃辣的 60以内</div>
+    <div class="chip" onclick="ask('三个人 清淡一点 预算80')">三个人 清淡 80</div>
+    <div class="chip" onclick="ask('随便 两个人')">随便 两个人</div>
+    <div class="chip" onclick="ask('')">什么都不说</div>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <div class="inputbar">
+    <input id="q" placeholder="比如：两个人吃辣的，60以内，不要香菜" onkeydown="if(event.key==='Enter')ask()">
+    <button class="btn voice" id="voiceBtn" onclick="toggleVoice()">🎤</button>
+    <button class="btn" id="sendBtn" onclick="ask()">发送</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var API = '';
+var token = null;
+var recognition = null;
+var voiceOn = false;
+
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 1600);
+}
+function emojiOf(name) {
+  var map = [['鱼','🐟'],['蛙','🐸'],['肉','🥩'],['汤','🍲'],['饭','🍚'],['馒头','🥟'],
+             ['啤酒','🍺'],['王老吉','🥤'],['北冰洋','🥤'],['菜','🥬'],['豆腐','🍲'],['肘子','🍖']];
+  for (var i=0;i<map.length;i++){ if((name||'').indexOf(map[i][0])>=0) return map[i][1]; }
+  return '🍽️';
+}
+function setEmotion(e) {
+  var a = document.getElementById('avatar');
+  a.className = 'avatar ' + (e || '');
+}
+function speak(text) {
+  document.getElementById('speech').textContent = text;
+  try {
+    if (!window.speechSynthesis) return;
+    speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN'; u.rate = 1.05;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+function render(vo) {
+  var list = document.getElementById('list');
+  list.innerHTML = '';
+  var items = vo.items || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="meta">没有找到合适的菜，换个说法试试～</div>';
+    return;
+  }
+  items.forEach(function(it) {
+    var div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML =
+      '<div class="emoji">' + emojiOf(it.name) + '</div>' +
+      '<div class="body">' +
+        '<h3>' + it.name + '</h3>' +
+        '<div class="reason">' + (it.reason || '') + '</div>' +
+        '<div class="row"><span class="price">¥' + (it.price == null ? '-' : it.price) + '</span>' +
+        '<button class="add" onclick="addCart(' + it.dishId + ',\'' + it.name.replace(/'/g, '') + '\')">加入购物车</button></div>' +
+      '</div>';
+    list.appendChild(div);
+  });
+  var mode = vo.mode, ms = vo.elapsedMs || 0;
+  var meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = '模式 ' + mode + ' · ' + ms + 'ms' + (vo.degraded ? ' · 已降级' : '');
+  list.appendChild(meta);
+}
+function ask(text) {
+  var q = (text === undefined ? document.getElementById('q').value : text) || '';
+  document.getElementById('q').value = q;
+  setEmotion('thinking');
+  document.getElementById('speech').textContent = '让我想想…';
+  var btn = document.getElementById('sendBtn'); btn.disabled = true;
+  var payload = JSON.stringify({ query: q });
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/user/ai/recommendSync', true);
+  xhr.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
+  xhr.setRequestHeader('authentication', token || '');
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    btn.disabled = false;
+    if (xhr.status !== 200) { setEmotion('confused'); speak('网络不太顺畅，再说一次？'); return; }
+    var obj = JSON.parse(xhr.responseText);
+    var vo = obj.data || {};
+    var emo = vo.emotion || 'happy';
+    setEmotion(emo);
+    speak(vo.speech || '给你挑了这几个');
+    render(vo);
+  };
+  xhr.send(payload);
+}
+function addCart(dishId, name) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/user/shoppingcart/add', true);
+  xhr.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
+  xhr.setRequestHeader('authentication', token || '');
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200) {
+      var obj = JSON.parse(xhr.responseText);
+      if (obj.code === 1) toast('已加入购物车：' + name);
+      else toast(obj.msg || '加购失败');
+    } else { toast('加购失败'); }
+  };
+  xhr.send(JSON.stringify({ dishId: dishId }));
+}
+function toggleVoice() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('当前浏览器不支持语音识别，请用 Chrome/Edge'); return; }
+  if (voiceOn) { recognition && recognition.stop(); return; }
+  recognition = new SR();
+  recognition.lang = 'zh-CN';
+  recognition.interimResults = false;
+  recognition.onstart = function(){ voiceOn = true; document.getElementById('voiceBtn').textContent = '🔴'; };
+  recognition.onend = function(){ voiceOn = false; document.getElementById('voiceBtn').textContent = '🎤'; };
+  recognition.onerror = function(){ toast('没听清，再说一次？'); };
+  recognition.onresult = function(e) {
+    var text = e.results[0][0].transcript;
+    document.getElementById('q').value = text;
+    ask(text);
+  };
+  recognition.start();
+}
+(function init() {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/user/user/login', true);
+  xhr.setRequestHeader('Content-Type', 'application/json; charset=utf-8');
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    if (xhr.status === 200) {
+      var obj = JSON.parse(xhr.responseText);
+      token = obj.data && obj.data.token;
+    } else { speak('登录失败，请刷新页面'); }
+  };
+  xhr.send(JSON.stringify({ code: 'h5_demo_user' }));
+})();
+</script>
+</body>
+</html>

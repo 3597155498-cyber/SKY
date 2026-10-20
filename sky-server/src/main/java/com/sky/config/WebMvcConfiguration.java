@@ -75,6 +75,8 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
         log.info("开始设置静态资源映射");
         registry.addResourceHandler("/doc.html").addResourceLocations("classpath:/META-INF/resources/");
         registry.addResourceHandler("/webjars/**").addResourceLocations("classpath:/META-INF/resources/webjars/");
+        // 扫码点餐 H5 演示页：http://localhost:8080/ai/index.html
+        registry.addResourceHandler("/ai/**").addResourceLocations("classpath:/static/ai/");
     }
 
     /*
