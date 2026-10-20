@@ -40,11 +40,11 @@ for ($i = 0; $i -lt $rounds; $i++) {
   # 商家接单 vs 用户取消 并发
   $c1 = New-Object System.Net.Http.HttpClient
   $c1.DefaultRequestHeaders.Add("token", $adminToken)
-  $t1 = $c1.PutAsync("$base/admin/order/confirm", (New-Object System.Net.Http.StringContent('{"id":' + $orderId + '}', [System.Text.Encoding]::UTF8, "application/json")))
+  $t1 = $c1.PutAsync("$base/admin/order/confirm", ([System.Net.Http.StringContent]::new('{"id":' + $orderId + '}', [System.Text.Encoding]::UTF8, "application/json")))
 
   $c2 = New-Object System.Net.Http.HttpClient
   $c2.DefaultRequestHeaders.Add("authentication", $userToken)
-  $t2 = $c2.PutAsync("$base/user/order/cancel/$orderId", (New-Object System.Net.Http.StringContent("", [System.Text.Encoding]::UTF8, "application/json")))
+  $t2 = $c2.PutAsync("$base/user/order/cancel/$orderId", ([System.Net.Http.StringContent]::new("")))
 
   [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($t1, $t2))
   $r1 = ($t1.Result.Content.ReadAsStringAsync().Result | ConvertFrom-Json).code

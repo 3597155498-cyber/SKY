@@ -20,3 +20,4 @@ sky:
     appid: ${WECHAT_APPID:}
     secret: ${WECHAT_SECRET:}
     mock: ${WECHAT_MOCK:true}
+

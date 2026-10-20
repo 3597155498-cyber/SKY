@@ -173,4 +173,21 @@ final_status=3
 
 - 单元测试：`OrderStatusTransferTest` 全绿
 
-⚠️ 未闭环项：`PUT /admin/order/confirm` 等带 JSON body 的管理端 PUT 接口返回 400（HttpMessageNotReadableException），导致 T09 的 HTTP 级并发脚本无法跑通。该 controller 属 day12 未提交代码，需下一步排查（怀疑自定义消息转换器与 PUT 的组合问题）。
+HTTP 级并发验证（修正客户端后）：
+
+```
+round0: confirmCode=1 cancelCode= finalStatus=3
+T09 rounds=10 illegalFinalStatus=0 bothSucceeded=0
+PASS  T09 final status always legal: 0
+PASS  T09 only one side wins per round: 0
+PASS  T09 duplicate confirm rejected: 0
+---- t09 done ----
+```
+
+> 排查记录：此前 `PUT /admin/order/confirm` 返回 400，**不是服务端缺陷**。
+> PowerShell 调原生 `curl.exe` 时会把 `--data '{"id":99}'` 的引号吃掉，实际发出 `{id:99}`，
+> 服务端 Jackson 报 `Unexpected character ('i') ... column 3`。
+> 过程中补充了一处真实改进：`GlobalExceptionHandler` 原本不处理
+> `HttpMessageNotReadableException`，请求体畸形时只回一个空 400；现已统一返回 `{"code":0,"msg":"请求参数格式错误"}`。
+> 教训：验证脚本里的 HTTP 客户端本身也要可信，用 `Invoke-RestMethod` 或
+> `[System.Net.Http.StringContent]::new(...)`，不要用 `New-Object StringContent(...)`。
