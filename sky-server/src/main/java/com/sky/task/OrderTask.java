@@ -1,7 +1,9 @@
 package com.sky.task;
 
+import com.sky.constant.StockBizType;
 import com.sky.entity.Orders;
 import com.sky.mapper.OrderMapper;
+import com.sky.service.StockService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,8 +19,12 @@ public class OrderTask {
     @Autowired
     private OrderMapper orderMapper;
 
+    @Autowired
+    private StockService stockService;
+
     /*
      * 处理超时订单
+     * 注：T04 将改为 Redis ZSet 延迟队列，此处暂时保留并补上库存回补
      * */
     @Scheduled(cron = "0 *  * * * ?")
     public void processTimeoutOrder() {
@@ -35,6 +41,8 @@ public class OrderTask {
                 orders.setCancelReason("订单超时,自动取消");
                 orders.setCancelTime(LocalDateTime.now());
                 orderMapper.update(orders);
+                // 超时取消后回补库存（依赖 stock_log 唯一键保证幂等）
+                stockService.restoreForOrder(orders.getId(), StockBizType.TIMEOUT);
             }
         }
     }
@@ -57,15 +65,3 @@ public class OrderTask {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-

@@ -25,4 +25,10 @@ public class MessageConstant {
     public static final String ORDER_NOT_FOUND = "订单不存在";
 
     public static final String ALREADY_EXISTS = "已存在";
+
+    //库存不足
+    public static final String STOCK_NOT_ENOUGH = "库存不足，请调整数量后重试";
+
+    //重复提交（幂等键已占用但订单尚未落库）
+    public static final String ORDER_SUBMITTING = "订单正在处理中，请勿重复提交";
 }

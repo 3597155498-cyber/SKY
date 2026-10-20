@@ -25,9 +25,10 @@ public class OrderController {
 
     @PostMapping("/submit")
     @ApiOperation("用户下单")
-    public Result<OrderSubmitVO> submit(@RequestBody OrdersSubmitDTO ordersSubmitDTO) {
-        log.info("用户下单: {}", ordersSubmitDTO);
-        OrderSubmitVO orderSubmitVO = orderService.submitOrder(ordersSubmitDTO);
+    public Result<OrderSubmitVO> submit(@RequestBody OrdersSubmitDTO ordersSubmitDTO,
+                                        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        log.info("用户下单: {}, 幂等键: {}", ordersSubmitDTO, idempotencyKey);
+        OrderSubmitVO orderSubmitVO = orderService.submitOrder(ordersSubmitDTO, idempotencyKey);
         return Result.success(orderSubmitVO);
     }
 
@@ -80,7 +81,6 @@ public class OrderController {
      * 再来一单
      */
     @PostMapping("/repetition/{id}")
-    @ApiOperation("再来一单")
     public Result repetition(@PathVariable Long id) {
         orderService.repetition(id);
         return Result.success();
@@ -97,15 +97,3 @@ public class OrderController {
     }
 
 }
-
-
-
-
-
-
-
-
-
-
-
-

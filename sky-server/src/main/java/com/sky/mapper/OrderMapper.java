@@ -58,6 +58,16 @@ public interface OrderMapper {
     Orders getByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
 
     /**
+     * 根据用户id与幂等键查询订单（幂等：重复提交时直接返回原订单）
+     *
+     * @param userId         用户id
+     * @param idempotencyKey 幂等键
+     */
+    @Select("select * from orders where user_id = #{userId} and idempotency_key = #{idempotencyKey} limit 1")
+    Orders getByUserIdAndIdempotencyKey(@Param("userId") Long userId,
+                                        @Param("idempotencyKey") String idempotencyKey);
+
+    /**
      * 根据状态统计订单数量
      *
      * @param status
@@ -81,12 +91,3 @@ public interface OrderMapper {
     //销量统计  指定时间内
     List<GoodsSalesDTO> getSalesTop10(LocalDateTime begin,LocalDateTime end);
 }
-
-
-
-
-
-
-
-
-

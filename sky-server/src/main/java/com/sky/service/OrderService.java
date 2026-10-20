@@ -15,8 +15,14 @@ import com.sky.vo.OrderVO;
 
 
 public interface OrderService {
-    //用户下单
-     OrderSubmitVO submitOrder(OrdersSubmitDTO ordersSubmitDTO);
+
+    /**
+     * 用户下单（幂等 + 库存扣减）
+     *
+     * @param ordersSubmitDTO 下单参数
+     * @param idempotencyKey  幂等键，可为空（为空时按用户+地址+购物车指纹派生）
+     */
+    OrderSubmitVO submitOrder(OrdersSubmitDTO ordersSubmitDTO, String idempotencyKey);
 
     /**
      * 订单支付

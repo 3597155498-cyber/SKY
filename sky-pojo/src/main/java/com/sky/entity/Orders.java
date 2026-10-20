@@ -42,6 +42,9 @@ public class Orders implements Serializable {
     //订单号
     private String number;
 
+    //幂等键：同一用户 + 同一幂等键只允许落一单
+    private String idempotencyKey;
+
     //订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消 7退款
     private Integer status;
 
