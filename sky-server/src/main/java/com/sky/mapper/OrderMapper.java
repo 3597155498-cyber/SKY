@@ -97,6 +97,24 @@ public interface OrderMapper {
                            @Param("cancelReason") String cancelReason,
                            @Param("cancelTime") LocalDateTime cancelTime);
 
+    /**
+     * 按天聚合营业额（一次查询替代"每天查一次"）
+     */
+    @Select("select date_format(order_time, '%Y-%m-%d') as d, sum(amount) as v from orders " +
+            "where status = 5 and order_time between #{begin} and #{end} group by d")
+    List<Map<String, Object>> sumTurnoverByDay(@Param("begin") LocalDateTime begin,
+                                               @Param("end") LocalDateTime end);
+
+    /**
+     * 按天聚合订单量，status 为空表示全部订单
+     */
+    @Select("<script>select date_format(order_time, '%Y-%m-%d') as d, count(id) as v from orders " +
+            "where order_time between #{begin} and #{end} " +
+            "<if test='status != null'> and status = #{status}</if> group by d</script>")
+    List<Map<String, Object>> countOrdersByDay(@Param("begin") LocalDateTime begin,
+                                               @Param("end") LocalDateTime end,
+                                               @Param("status") Integer status);
+
     //动态统计营业额
     Double sumByMap(Map map);
 

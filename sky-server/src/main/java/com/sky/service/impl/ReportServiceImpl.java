@@ -30,6 +30,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -56,26 +57,52 @@ public class ReportServiceImpl implements ReportService {
             begin = begin.plusDays(1);
             dateList.add(begin);
         }
-        //存放每天营业额
+
+        //一次聚合查询替代"每天查一次"：30 天从 30 条 SQL 降为 1 条
+        LocalDateTime beginTime = LocalDateTime.of(dateList.get(0), LocalTime.MIN);
+        LocalDateTime endTime = LocalDateTime.of(dateList.get(dateList.size() - 1), LocalTime.MAX);
+        Map<String, Double> turnoverMap = toDoubleMap(orderMapper.sumTurnoverByDay(beginTime, endTime));
+
         List<Double> turnoverList = new ArrayList<Double>();
         for (LocalDate date : dateList) {
-            //查询日期对应营业额数据
-            LocalDateTime beginTime = LocalDateTime.of(date, LocalTime.MIN);
-            LocalDateTime endTime = LocalDateTime.of(date, LocalTime.MAX);
-
-            HashMap map = new HashMap();
-            map.put("begin", beginTime);
-            map.put("end", endTime);
-            map.put("status", Orders.COMPLETED);
-            Double turnover = orderMapper.sumByMap(map);
-            turnover = turnover == null ? 0.0 : turnover;
-            turnoverList.add(turnover);
-
+            turnoverList.add(turnoverMap.getOrDefault(date.toString(), 0.0));
         }
         return TurnoverReportVO.builder()
                 .dateList(StringUtils.join(dateList, ","))
                 .turnoverList(StringUtils.join(turnoverList, ","))
                 .build();
+    }
+
+    private Map<String, Double> toDoubleMap(List<Map<String, Object>> rows) {
+        Map<String, Double> result = new HashMap<>();
+        if (rows == null) {
+            return result;
+        }
+        for (Map<String, Object> row : rows) {
+            Object day = row.get("d");
+            Object value = row.get("v");
+            if (day == null) {
+                continue;
+            }
+            result.put(day.toString(), value == null ? 0.0 : ((Number) value).doubleValue());
+        }
+        return result;
+    }
+
+    private Map<String, Integer> toIntMap(List<Map<String, Object>> rows) {
+        Map<String, Integer> result = new HashMap<>();
+        if (rows == null) {
+            return result;
+        }
+        for (Map<String, Object> row : rows) {
+            Object day = row.get("d");
+            Object value = row.get("v");
+            if (day == null) {
+                continue;
+            }
+            result.put(day.toString(), value == null ? 0 : ((Number) value).intValue());
+        }
+        return result;
     }
 
     @Override
@@ -89,25 +116,22 @@ public class ReportServiceImpl implements ReportService {
             begin = begin.plusDays(1);
             dateList.add(begin);
         }
-        //存放每天新增用户数量
+
+        LocalDateTime beginTime = LocalDateTime.of(dateList.get(0), LocalTime.MIN);
+        LocalDateTime endTime = LocalDateTime.of(dateList.get(dateList.size() - 1), LocalTime.MAX);
+
+        //新增用户一次聚合；累计用户用"基线 + 逐日累加"，避免每天再查一次总数
+        Map<String, Integer> newUserMap = toIntMap(userMapper.countNewUsersByDay(beginTime, endTime));
+        Integer historyTotal = userMapper.countUsersBefore(beginTime);
+        int cumulative = historyTotal == null ? 0 : historyTotal;
+
         List<Integer> newUserList = new ArrayList<>();
-        //存放每天总用户数量
         List<Integer> totalUserList = new ArrayList<>();
-
         for (LocalDate date : dateList) {
-            LocalDateTime beginTime = LocalDateTime.of(date, LocalTime.MIN);
-            LocalDateTime endTime = LocalDateTime.of(date, LocalTime.MAX);
-
-            HashMap map = new HashMap();
-            map.put("end", endTime);
-            Integer totalUser = userMapper.countByMap(map);
-
-            map.put("begin", beginTime);
-            Integer newUser = userMapper.countByMap(map);
-
-            totalUserList.add(totalUser);
-            newUserList.add(newUser);
-
+            int newUsers = newUserMap.getOrDefault(date.toString(), 0);
+            cumulative += newUsers;
+            newUserList.add(newUsers);
+            totalUserList.add(cumulative);
         }
         return UserReportVO.builder()
                 .dateList(StringUtils.join(dateList, ","))
@@ -129,32 +153,24 @@ public class ReportServiceImpl implements ReportService {
             dateList.add(begin);
         }
 
-        //存放每天订单总数和有效订单数
+        LocalDateTime beginTime = LocalDateTime.of(dateList.get(0), LocalTime.MIN);
+        LocalDateTime endTime = LocalDateTime.of(dateList.get(dateList.size() - 1), LocalTime.MAX);
+
+        //两次聚合查询分别拿到"全部订单"和"有效订单"，替代原来每天 2 条 SQL
+        Map<String, Integer> allOrderMap = toIntMap(orderMapper.countOrdersByDay(beginTime, endTime, null));
+        Map<String, Integer> validOrderMap = toIntMap(
+                orderMapper.countOrdersByDay(beginTime, endTime, Orders.COMPLETED));
+
         List<Integer> orderCountList = new ArrayList<>();
         List<Integer> validOrderCountList = new ArrayList<>();
         int totalOrderCount = 0;
         int validOrderCount = 0;
-
-        //遍历dateList集合，查询每天的订单总数和有效订单数
         for (LocalDate date : dateList) {
-            LocalDateTime beginTime = LocalDateTime.of(date, LocalTime.MIN);
-            LocalDateTime endTime = LocalDateTime.of(date, LocalTime.MAX);
-
-            HashMap<String, Object> map = new HashMap<>();
-            map.put("begin", beginTime);
-            map.put("end", endTime);
-
-            //查询每天订单总数
-            Integer orderCount = orderMapper.countByMap(map);
-            orderCount = orderCount == null ? 0 : orderCount;
+            int orderCount = allOrderMap.getOrDefault(date.toString(), 0);
+            int validCount = validOrderMap.getOrDefault(date.toString(), 0);
             orderCountList.add(orderCount);
-            totalOrderCount += orderCount;
-
-            //查询每天有效订单数
-            map.put("status", Orders.COMPLETED);
-            Integer validCount = orderMapper.countByMap(map);
-            validCount = validCount == null ? 0 : validCount;
             validOrderCountList.add(validCount);
+            totalOrderCount += orderCount;
             validOrderCount += validCount;
         }
 
