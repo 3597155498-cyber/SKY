@@ -9,7 +9,6 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -73,7 +72,7 @@ public interface OrderMapper {
     List<Orders> getByStatusAndOrderTimeLT(Integer status, LocalDateTime orderTime);
 
     //动态统计营业额
-    Double sumByMap(HashMap map);
+    Double sumByMap(Map map);
 
     //动态统计订单数量
     Integer countByMap(Map map);

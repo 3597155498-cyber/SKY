@@ -1,0 +1,323 @@
+package com.sky.skill;
+
+import com.sky.context.BaseContext;
+import com.sky.dto.OrdersSubmitDTO;
+import com.sky.dto.ShoppingCartDTO;
+import com.sky.entity.AddressBook;
+import com.sky.entity.ShoppingCart;
+import com.sky.service.AddressBookService;
+import com.sky.service.OrderService;
+import com.sky.service.ShoppingCartService;
+import com.sky.vo.OrderSubmitVO;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("dev")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+public class UserFlowOrderSmokeTest {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private AddressBookService addressBookService;
+
+    @Autowired
+    private ShoppingCartService shoppingCartService;
+
+    @Autowired
+    private OrderService orderService;
+
+    @Test
+    public void testAddressCartAndOrderWithTemporaryUser() throws Throwable {
+        String marker = "sky-smoke-" + System.currentTimeMillis() + "-"
+                + UUID.randomUUID().toString().substring(0, 6);
+        TestState state = new TestState(marker);
+        Throwable failure = null;
+
+        try {
+            DishFixture dish = findActiveDish();
+            state.userId = insertTemporaryUser(marker);
+            BaseContext.setCurrentId(state.userId);
+
+            AddressBook addressBook = AddressBook.builder()
+                    .consignee("Smoke Test")
+                    .phone("13900000000")
+                    .sex("1")
+                    .detail(marker)
+                    .label("smoke-test")
+                    .build();
+            addressBookService.save(addressBook);
+
+            state.addressIds.addAll(queryLongs(
+                    "select id from address_book where user_id = ? and detail = ?",
+                    state.userId, marker));
+            assertEquals(1, state.addressIds.size(), "temporary address was not created exactly once");
+
+            ShoppingCartDTO shoppingCartDTO = new ShoppingCartDTO();
+            shoppingCartDTO.setDishId(dish.id);
+            shoppingCartDTO.setDishFlavor(marker);
+            shoppingCartService.addShoppingCart(shoppingCartDTO);
+
+            state.cartIds.addAll(queryLongs(
+                    "select id from shopping_cart where user_id = ? and dish_flavor = ?",
+                    state.userId, marker));
+            assertEquals(1, state.cartIds.size(), "temporary shopping cart was not created exactly once");
+
+            List<ShoppingCart> shoppingCart = shoppingCartService.showShoppingCart();
+            assertEquals(1, shoppingCart.size(), "temporary user should have one cart row");
+            assertEquals(marker, shoppingCart.get(0).getDishFlavor());
+
+            BigDecimal orderAmount = shoppingCart.get(0).getAmount()
+                    .multiply(BigDecimal.valueOf(shoppingCart.get(0).getNumber()));
+
+            OrdersSubmitDTO request = new OrdersSubmitDTO();
+            request.setAddressBookId(state.addressIds.get(0));
+            request.setPayMethod(1);
+            request.setAmount(orderAmount);
+            request.setRemark(marker);
+            request.setDeliveryStatus(1);
+            request.setTablewareNumber(1);
+            request.setTablewareStatus(1);
+            request.setPackAmount(0);
+            request.setEstimatedDeliveryTime(LocalDateTime.now().plusHours(1));
+
+            System.out.println("SKY_SMOKE_STATUS=CART_ADDRESS_ORDER|RUNNING|temporary context established");
+            OrderSubmitVO result = orderService.submitOrder(request);
+
+            assertNotNull(result);
+            assertNotNull(result.getId(), "order id must not be null");
+            assertNotNull(result.getOrderNumber(), "order number must not be null");
+            assertEquals(0, result.getOrderAmount().compareTo(orderAmount), "order amount mismatch");
+
+            state.orderIds.addAll(queryLongs(
+                    "select id from orders where user_id = ? and remark = ?",
+                    state.userId, marker));
+            assertEquals(1, state.orderIds.size(), "temporary order was not created exactly once");
+            assertEquals(result.getId(), state.orderIds.get(0));
+
+            int detailCount = count(
+                    "select count(*) from order_detail where order_id = ?",
+                    result.getId());
+            assertEquals(state.cartIds.size(), detailCount, "order detail count mismatch");
+            assertEquals(0, count(
+                    "select count(*) from shopping_cart where user_id = ? and dish_flavor = ?",
+                    state.userId, marker), "shopping cart was not cleared after order submission");
+
+            System.out.println("SKY_SMOKE_STATUS=CART_ADDRESS_ORDER|PASS|order and detail created; cart cleared");
+        } catch (Throwable ex) {
+            failure = ex;
+            if (containsText(ex, "Parameter 'ad' not found")) {
+                System.out.println("SKY_SMOKE_STATUS=CART_ADDRESS_ORDER|KNOWN_SOURCE_DEFECT|"
+                        + "OrderDetailMapper.xml:9 references ad.amount instead of od.amount");
+            } else if (containsText(ex, "BLOCKED_NO_ACTIVE_DISH")) {
+                System.out.println("SKY_SMOKE_STATUS=CART_ADDRESS_ORDER|BLOCKED|no enabled dish available");
+            } else {
+                System.out.println("SKY_SMOKE_STATUS=CART_ADDRESS_ORDER|FAIL|" + safeMessage(ex));
+            }
+        } finally {
+            BaseContext.removeCurrentId();
+            try {
+                cleanup(state);
+                System.out.println("SKY_SMOKE_STATUS=CLEANUP|PASS|temporary rows removed");
+                System.out.println("SKY_SMOKE_STATUS=RESIDUE_CHECK|PASS|all marker counts are zero");
+            } catch (Throwable cleanupFailure) {
+                System.out.println("SKY_SMOKE_STATUS=CLEANUP|CLEANUP_FAILED|" + safeMessage(cleanupFailure));
+                if (failure == null) {
+                    failure = cleanupFailure;
+                } else {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+        }
+
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private DishFixture findActiveDish() {
+        List<DishFixture> dishes = jdbcTemplate.query(
+                "select id, price from dish where status = 1 order by id limit 1",
+                new RowMapper<DishFixture>() {
+                    @Override
+                    public DishFixture mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+                        return new DishFixture(resultSet.getLong("id"), resultSet.getBigDecimal("price"));
+                    }
+                });
+        if (dishes.isEmpty()) {
+            throw new IllegalStateException("BLOCKED_NO_ACTIVE_DISH");
+        }
+        return dishes.get(0);
+    }
+
+    private Long insertTemporaryUser(final String marker) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "insert into `user` (openid, name, phone, sex, create_time) values (?, ?, ?, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS);
+            statement.setString(1, marker);
+            statement.setString(2, "Smoke Test");
+            statement.setString(3, "13900000000");
+            statement.setString(4, "1");
+            statement.setObject(5, LocalDateTime.now());
+            return statement;
+        }, keyHolder);
+
+        Number key = keyHolder.getKey();
+        assertNotNull(key, "temporary user id was not generated");
+        return key.longValue();
+    }
+
+    private void cleanup(TestState state) {
+        if (state.userId == null) {
+            return;
+        }
+
+        Set<Long> orderIds = new LinkedHashSet<Long>(state.orderIds);
+        orderIds.addAll(queryLongs(
+                "select id from orders where user_id = ? and remark = ?",
+                state.userId, state.marker));
+        for (Long orderId : orderIds) {
+            jdbcTemplate.update("delete from order_detail where order_id = ?", orderId);
+        }
+        for (Long orderId : orderIds) {
+            jdbcTemplate.update(
+                    "delete from orders where id = ? and user_id = ? and remark = ?",
+                    orderId, state.userId, state.marker);
+        }
+
+        Set<Long> cartIds = new LinkedHashSet<Long>(state.cartIds);
+        cartIds.addAll(queryLongs(
+                "select id from shopping_cart where user_id = ? and dish_flavor = ?",
+                state.userId, state.marker));
+        for (Long cartId : cartIds) {
+            jdbcTemplate.update(
+                    "delete from shopping_cart where id = ? and user_id = ? and dish_flavor = ?",
+                    cartId, state.userId, state.marker);
+        }
+
+        Set<Long> addressIds = new LinkedHashSet<Long>(state.addressIds);
+        addressIds.addAll(queryLongs(
+                "select id from address_book where user_id = ? and detail = ?",
+                state.userId, state.marker));
+        for (Long addressId : addressIds) {
+            jdbcTemplate.update(
+                    "delete from address_book where id = ? and user_id = ? and detail = ?",
+                    addressId, state.userId, state.marker);
+        }
+
+        jdbcTemplate.update(
+                "delete from `user` where id = ? and openid = ?",
+                state.userId, state.marker);
+
+        List<String> residues = new ArrayList<String>();
+        if (count("select count(*) from orders where user_id = ? and remark = ?",
+                state.userId, state.marker) != 0) {
+            residues.add("orders");
+        }
+        if (count("select count(*) from shopping_cart where user_id = ? and dish_flavor = ?",
+                state.userId, state.marker) != 0) {
+            residues.add("shopping_cart");
+        }
+        if (count("select count(*) from address_book where user_id = ? and detail = ?",
+                state.userId, state.marker) != 0) {
+            residues.add("address_book");
+        }
+        if (count("select count(*) from `user` where id = ? and openid = ?",
+                state.userId, state.marker) != 0) {
+            residues.add("user");
+        }
+        for (Long orderId : orderIds) {
+            if (count("select count(*) from order_detail where order_id = ?", orderId) != 0) {
+                residues.add("order_detail:" + orderId);
+            }
+        }
+
+        assertFalse(!residues.isEmpty(), "temporary residue remains: " + residues);
+    }
+
+    private List<Long> queryLongs(String sql, Object... args) {
+        return jdbcTemplate.query(sql, args, new RowMapper<Long>() {
+            @Override
+            public Long mapRow(ResultSet resultSet, int rowNum) throws SQLException {
+                return resultSet.getLong(1);
+            }
+        });
+    }
+
+    private int count(String sql, Object... args) {
+        Integer value = jdbcTemplate.queryForObject(sql, args, Integer.class);
+        return value == null ? 0 : value;
+    }
+
+    private boolean containsText(Throwable throwable, String text) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current.getMessage() != null && current.getMessage().contains(text)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private String safeMessage(Throwable throwable) {
+        Throwable root = throwable;
+        while (root.getCause() != null) {
+            root = root.getCause();
+        }
+        String message = root.getClass().getSimpleName();
+        if (root.getMessage() != null) {
+            message += ": " + root.getMessage().replace('\r', ' ').replace('\n', ' ');
+        }
+        return message.length() > 300 ? message.substring(0, 300) : message;
+    }
+
+    private static class DishFixture {
+        private final Long id;
+        private final BigDecimal price;
+
+        private DishFixture(Long id, BigDecimal price) {
+            this.id = id;
+            this.price = price;
+        }
+    }
+
+    private static class TestState {
+        private final String marker;
+        private Long userId;
+        private final List<Long> addressIds = new ArrayList<Long>();
+        private final List<Long> cartIds = new ArrayList<Long>();
+        private final List<Long> orderIds = new ArrayList<Long>();
+
+        private TestState(String marker) {
+            this.marker = marker;
+        }
+    }
+}
