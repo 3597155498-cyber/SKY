@@ -1,0 +1,32 @@
+package com.sky.service;
+
+import com.sky.dto.CommentDTO;
+import com.sky.result.PageResult;
+
+import java.time.LocalDate;
+import java.util.Map;
+
+public interface CommentService {
+
+    /**
+     * 用户提交评价（一单一评）
+     */
+    void submit(CommentDTO commentDTO, Long userId);
+
+    /**
+     * 批量分析未处理评价（离线任务，可重跑）
+     *
+     * @return 本次分析条数
+     */
+    int analyzePending(int limit);
+
+    /**
+     * 商家洞察：差评主题 TopN + 可行动建议
+     */
+    Map<String, Object> insight(LocalDate begin, LocalDate end);
+
+    /**
+     * 管理端评价分页
+     */
+    PageResult page(int page, int pageSize, Integer score);
+}
