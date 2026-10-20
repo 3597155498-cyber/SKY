@@ -44,6 +44,7 @@
   @keyframes shimmer{to{background-position:300% 0}}
   .sub{font-size:12px;color:#7f8ba3;margin-top:6px}
   .actions{display:flex;gap:10px;align-items:center}
+  .actions input[type=date]{background:rgba(255,255,255,.06);border:1px solid rgba(120,150,220,.25);color:#cfd8ea;border-radius:10px;padding:8px 10px;font-size:12px;color-scheme:dark}
   button{cursor:pointer;border:0;border-radius:10px;padding:9px 16px;font-size:13px;font-weight:600;
     color:#0b0f18;background:linear-gradient(90deg,#ffb08a,#ff7a45);transition:transform .15s,box-shadow .2s}
   button:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(255,122,69,.35)}
@@ -104,8 +105,10 @@
       <div class="sub" id="sub">近 30 天 · 加载中…</div>
     </div>
     <div class="actions">
-      <button class="ghost" onclick="load(true)">刷新数据</button>
-      <button onclick="invalidate()">重算缓存</button>
+      <input type="date" id="begin" title="开始日期">
+      <input type="date" id="end" title="结束日期">
+      <button onclick="load(true)">查询</button>
+      <button class="ghost" onclick="invalidate()">重算缓存</button>
     </div>
   </header>
 
@@ -184,7 +187,9 @@ function invalidate(){
   xhr.send();
 }
 function load(force){
-  const end = new Date(); const begin = new Date(); begin.setDate(end.getDate() - 29);
+  const bEl = document.getElementById("begin"), eEl = document.getElementById("end");
+  const end = eEl.value ? new Date(eEl.value) : new Date();
+  const begin = bEl.value ? new Date(bEl.value) : (function(){ const d = new Date(end); d.setDate(d.getDate() - 29); return d; })();
   const url = API + '/admin/comment/insight?begin=' + fmtDate(begin) + '&end=' + fmtDate(end);
   const xhr = new XMLHttpRequest();
   xhr.open('GET', url, true);
@@ -252,6 +257,11 @@ function drawTrend(trend){
     c.appendChild(title); dots.appendChild(c);
   });
 }
+(function initRange(){
+  const end = new Date(); const begin = new Date(); begin.setDate(end.getDate() - 29);
+  document.getElementById("end").value = fmtDate(end);
+  document.getElementById("begin").value = fmtDate(begin);
+})();
 login(function(){ load(); setInterval(function(){ load(); }, 60000); });
 </script>
 </body>
