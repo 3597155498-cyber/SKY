@@ -52,19 +52,12 @@ import java.util.concurrent.TimeUnit;
 public class AiRecommendServiceImpl implements AiRecommendService {
 
     private static final String PARSE_SYSTEM_PROMPT =
-            "你是餐饮点餐意图解析器。只输出 JSON，不要解释，不要输出菜品 id。"
-                    + "字段：spicy(0不辣/1微辣/2中辣/3特辣，不确定填null)、flavors(口味数组，如麻辣/清淡/酸甜)、"
-                    + "excludeIngredients(忌口食材数组)、budgetPerPerson(人均预算整数)、people(人数整数)、"
-                    + "category(荤菜/素菜/汤/主食/套餐/饮品 之一)、keyword(未能归类的关键词)。"
-                    + "输入可能来自语音识别，含错别字、语气词、断句错误，请按餐饮语境推断最可能的含义；"
-                    + "实在无法判断的字段填 null，不要编造。每个字段都要独立判断，不要因为解析出一个字段就省略其他字段。\n"
-                    + "示例1：{\"query\":\"两个人吃辣的，不超过60，不要香菜\"} -> "
-                    + "{\"spicy\":2,\"flavors\":[\"麻辣\"],\"excludeIngredients\":[\"香菜\"],\"budgetPerPerson\":60,\"people\":2,\"category\":null,\"keyword\":null}\n"
-                    + "示例2：{\"query\":\"来个宫爆鸡丁，不要香采\"} -> "
-                    + "{\"spicy\":null,\"flavors\":[],\"excludeIngredients\":[\"香菜\"],\"budgetPerPerson\":null,\"people\":null,\"category\":\"荤菜\",\"keyword\":\"宫保鸡丁\"}\n"
-                    + "示例3：{\"query\":\"随便\"} -> "
-                    + "{\"spicy\":null,\"flavors\":[],\"excludeIngredients\":[],\"budgetPerPerson\":null,\"people\":null,\"category\":null,\"keyword\":null}\n"
-                    + "注意：\"不超过60\"\"60以内\"\"预算60\" 都表示 budgetPerPerson=60，不要取一半或猜测。";
+            "餐饮点餐意图解析。只输出JSON，字段：spicy(0不辣1微辣2中辣3特辣)、flavors(口味数组)、"
+                    + "excludeIngredients(忌口数组)、budgetPerPerson(整数)、people(整数)、"
+                    + "category(荤菜/素菜/汤/主食/套餐)、keyword(其他关键词)。不确定填null。"
+                    + "输入可能含错别字或语音断句，按餐饮语境推断。示例："
+                    + "{\"query\":\"两个人吃辣的，不超过60，不要香菜\"}->"
+                    + "{\"spicy\":2,\"flavors\":[\"麻辣\"],\"excludeIngredients\":[\"香菜\"],\"budgetPerPerson\":60,\"people\":2,\"category\":null,\"keyword\":null}";
 
     private static final String REASON_SYSTEM_PROMPT =
             "你是餐厅服务员的推荐话术生成器。只输出 JSON：{\"items\":[{\"name\":\"菜名\",\"reason\":\"不超过20字的推荐理由\"}]}。"
@@ -91,6 +84,8 @@ public class AiRecommendServiceImpl implements AiRecommendService {
     private String model;
     @Value("${sky.ai.max-items:5}")
     private int maxItems;
+    @Value("${sky.ai.reason-enabled:false}")
+    private boolean reasonEnabled;
     @Value("${sky.ai.cache-ttl-minutes:10}")
     private int cacheTtlMinutes;
     @Value("${sky.ai.persona.mascot-name:小天}")
@@ -411,6 +406,13 @@ public class AiRecommendServiceImpl implements AiRecommendService {
     // ---------------- 理由与话术 ----------------
 
     private void fillReasons(List<AiItemVO> items, AiIntent intent) {
+        // 理由生成是第二次模型调用（约 +2~7s）。默认关闭，用模板理由；需要时再开
+        if (!reasonEnabled) {
+            for (AiItemVO item : items) {
+                item.setReason(templateReason(item, intent));
+            }
+            return;
+        }
         StringBuilder payload = new StringBuilder("{\"items\":[");
         for (int i = 0; i < items.size(); i++) {
             AiItemVO item = items.get(i);
