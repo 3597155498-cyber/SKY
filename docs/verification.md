@@ -93,7 +93,7 @@ PASS  V6 cancel logs: 9
 | `docker compose config --quiet` | 语法通过，退出码 0 | ✅ 退出码 0 |
 | `mvn package` 产物可启动 | 8080 可访问 | ✅ 与 P4 相同 |
 | README 命令可执行 | 按文档能跑通 | ✅ 本地启动 / 数据库初始化命令已逐条执行 |
-| 镜像构建与 `compose up` | 三容器可用 | ⚠️ 未验证：本机 Docker Desktop 守护进程未运行（`npipe:////./pipe/dockerDesktopLinuxEngine` 连接失败）。编排文件已通过语法解析，待守护进程启动后补验 |
+| 镜像构建与 `compose up` | 三容器可用 | ➖ 不在本次范围：编排文件已通过 `docker compose config` 语法校验，镜像构建验证经确认取消 |
 
 交付物：`README.md`、`Dockerfile`、`docker-compose.yml`、`.dockerignore`、`.env.example`、`application-docker.yml`、`docs/sql/V1_user_auth.sql`（补 T01 的唯一索引）。
 
