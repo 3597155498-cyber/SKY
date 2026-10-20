@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+sky:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: ${MYSQL_HOST:mysql}
+    port: ${MYSQL_PORT:3306}
+    database: ${MYSQL_DATABASE:sky_take_out}
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123456}
+  alioss:
+    endpoint: ${ALIOSS_ENDPOINT:oss-cn-beijing.aliyuncs.com}
+    access-key-id: ${ALIOSS_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIOSS_ACCESS_KEY_SECRET:}
+    bucket-name: ${ALIOSS_BUCKET_NAME:}
+  redis:
+    host: ${REDIS_HOST:redis}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: ${REDIS_DATABASE:1}
+  wechat:
+    appid: ${WECHAT_APPID:}
+    secret: ${WECHAT_SECRET:}
+    mock: ${WECHAT_MOCK:true}

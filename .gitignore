@@ -2,5 +2,15 @@
 .idea
 *.iml
 *.class
-*Test.java
 **/test/
+
+# 本地环境与日志
+.env
+*.log
+logs/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+
+# 注意：docs/sql/backup/baseline.sql 需要入库，供 docker-compose 首次初始化使用
