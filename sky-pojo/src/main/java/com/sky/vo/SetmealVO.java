@@ -45,4 +45,10 @@ public class SetmealVO implements Serializable {
 
     //套餐和菜品的关联关系
     private List<SetmealDish> setmealDishes = new ArrayList<>();
+
+    //可售份数 = min(套餐自身库存, 组成菜品可支撑份数)，读取时实时计算
+    private Integer stock;
+
+    //是否售罄
+    private Boolean soldOut;
 }

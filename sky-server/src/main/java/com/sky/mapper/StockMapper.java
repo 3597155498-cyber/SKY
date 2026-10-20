@@ -1,5 +1,7 @@
 package com.sky.mapper;
 
+import com.sky.dto.SetmealStockDTO;
+import com.sky.entity.Dish;
 import com.sky.entity.StockLog;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -41,4 +43,25 @@ public interface StockMapper {
 
     @Select("select stock from setmeal where id = #{id}")
     Integer getSetmealStock(@Param("id") Long id);
+
+    /**
+     * 批量查询菜品库存（列表接口一次查完，避免 N+1）
+     */
+    @Select("<script>select id, stock from dish where id in " +
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
+    List<Dish> listDishStockByIds(@Param("ids") List<Long> ids);
+
+    /**
+     * 批量计算套餐可售量：
+     * 套餐自身库存 与 组成菜品可支撑份数（dish.stock / copies 取整）的较小值
+     */
+    @Select("<script>select s.id as id, s.stock as stock, " +
+            "min(floor(d.stock / greatest(ifnull(sd.copies,1),1))) as componentStock " +
+            "from setmeal s " +
+            "left join setmeal_dish sd on sd.setmeal_id = s.id " +
+            "left join dish d on d.id = sd.dish_id " +
+            "where s.id in " +
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach> " +
+            "group by s.id, s.stock</script>")
+    List<SetmealStockDTO> listSetmealAvailability(@Param("ids") List<Long> ids);
 }

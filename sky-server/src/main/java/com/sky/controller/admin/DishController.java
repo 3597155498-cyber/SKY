@@ -11,7 +11,8 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.annotation.CacheEvict;
+import com.sky.annotation.ClearCache;
+import com.sky.constant.CacheKeyConstant;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
@@ -31,7 +32,7 @@ public class DishController {
      * 新增菜品
      * */
     @PostMapping
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
+    @ClearCache(pattern = CacheKeyConstant.DISH_LIST + "*")
     public Result save(@RequestBody DishDTO dishDTO) {
         log.info("新增菜品:{}", dishDTO);
         dishService.saveWithFlavor(dishDTO);
@@ -65,7 +66,7 @@ public class DishController {
      * */
     @DeleteMapping
     @ApiOperation("菜品批量删除")
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
+    @ClearCache(pattern = CacheKeyConstant.DISH_LIST + "*")
     public Result delete(@RequestParam List<Long> ids, RedirectAttributes redirectAttributes) {
         log.info("菜品批量删除: {}", ids);
         dishService.deleteBatch(ids);
@@ -82,7 +83,7 @@ public class DishController {
 
     @PutMapping
     @ApiOperation("修改菜品")
-    @CacheEvict(cacheNames = "dishCache", allEntries = true)
+    @ClearCache(pattern = CacheKeyConstant.DISH_LIST + "*")
     public Result update(@RequestBody DishDTO dishDTO) {
         log.info("修改菜品:{}", dishDTO);
         dishService.updateWithFlavor(dishDTO);
