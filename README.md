@@ -298,6 +298,19 @@ mvn test -Dtest=OrderStatusTransferTest,CacheClientTest
 | 30 天三类报表统计 | 8 条 SQL（原实现约 90 条） |
 | 10 轮「接单 vs 取消」并发 | 每轮仅一方成功，末态全部合法 |
 
+### 数据集与种子脚本
+
+演示数据可一键重建，无需手工导数据：
+
+```bash
+powershell -File docs/verify/seed-t12.ps1                  # 默认 600 单 / 30 天
+powershell -File docs/verify/seed-t12.ps1 -Days 7          # 7 天版本
+powershell -File docs/verify/seed-t12.ps1 -Orders 5000     # 压测数据量
+powershell -File docs/verify/seed-t12.ps1 -Clean           # 清理 T12 前缀测试数据
+```
+
+脚本自动完成：清理旧数据 → 造订单 → 按真实分布造评价 → 触发规则分析 → **主动失效洞察缓存** → 打印自检结果。
+数据分布可复现（配送类差评占大头），适合做回归验证与演示。
 ## Roadmap
 
 - [x] T01 用户端微信登录 + JWT 拦截器（双端隔离）
@@ -314,7 +327,7 @@ mvn test -Dtest=OrderStatusTransferTest,CacheClientTest
 - [x] T11.5 扫码点餐 H5 演示页（桌宠气泡 / 语音 / 加购）
 - [x] T12 评价与商家洞察（词表分析 + LLM 周报 + 缓存失效）
 - [x] T12.5 商家经营看板 H5（流动背景 / 动态柱状 / 趋势曲线）
-- [ ] T12.6 种子数据脚本固化（一键重建 600 单/600 评价，便于复现与回归）
+- [x] T12.6 种子脚本（7/30 天可选、可清理、可复现）与看板任意时间段查询
 - [ ] T13 销量预测（非 LLM，MAPE 评估）
 - [ ] 语音智能体（讯飞 ASR/TTS 流式接入，放 Roadmap）
 
