@@ -106,6 +106,11 @@ public class ForecastServiceImpl implements ForecastService {
                 }
             }
 
+            // 小样本下"同一星期几的均值"比 MA7×系数更稳，样本不足时再退回
+            double[] weekdayMean = new double[7];
+            for (int d = 0; d < 7; d++) {
+                weekdayMean[d] = weekdayCnt[d] == 0 ? trainAvg : weekdaySum[d] / weekdayCnt[d];
+            }
             // 用训练段的最后 7 天均值做基线，逐日预测 holdout
             double ma7 = meanTail(values, trainSize, 7);
             double apeSum = 0;
@@ -125,6 +130,13 @@ public class ForecastServiceImpl implements ForecastService {
             }
 
             // 全量数据重算，预测明天
+            double[] allSum = new double[7];
+            int[] allCnt = new int[7];
+            for (int i = 0; i < values.length; i++) {
+                int d = allDays.get(i).getDayOfWeek().getValue() - 1;
+                allSum[d] += values[i];
+                allCnt[d]++;
+            }
             double ma7All = meanTail(values, values.length, 7);
             int tomorrowDow = tomorrow.getDayOfWeek().getValue() - 1;
             double forecastValue = ma7All * factor[tomorrowDow];
