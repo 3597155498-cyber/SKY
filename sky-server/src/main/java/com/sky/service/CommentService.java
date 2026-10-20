@@ -4,6 +4,7 @@ import com.sky.dto.CommentDTO;
 import com.sky.result.PageResult;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 public interface CommentService {
@@ -19,6 +20,13 @@ public interface CommentService {
      * @return 本次分析条数
      */
     int analyzePending(int limit);
+
+    /**
+     * 按评论 id 批量分析（MQ 消费者调用；重复消费由 comment_analysis 唯一键保证幂等）
+     *
+     * @return 实际分析条数
+     */
+    int analyzeByIds(List<Long> commentIds);
 
     /**
      * 商家洞察：差评主题 TopN + 可行动建议

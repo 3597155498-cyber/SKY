@@ -2,7 +2,7 @@
 
 面向餐饮商家的外卖点餐系统，包含 **管理端**（员工、分类、菜品、套餐、订单、报表）与 **用户端**（浏览、购物车、地址、下单、支付回调、催单）两条业务链路。
 
-在课程版基础上做了工程化改造：用户端认证闭环、下单幂等、菜品/套餐双库存与库存流水回补、超时订单延迟队列、手写缓存层、订单状态机与并发条件更新，并按业务边界把 AI 网关拆成独立服务（Nacos 注册发现 + OpenFeign）。配套可复跑的验证脚本（`docs/verify/`）与验证记录（`docs/verification.md`）。
+在课程版基础上做了工程化改造：用户端认证闭环、下单幂等、菜品/套餐双库存与库存流水回补、超时订单延迟队列、手写缓存层、订单状态机与并发条件更新、评价异步分析（RabbitMQ 批量消费 + 重试 + 死信队列），并按业务边界把 AI 网关拆成独立服务（Nacos 注册发现 + OpenFeign）。配套可复跑的验证脚本（`docs/verify/`）与验证记录（`docs/verification.md`）。
 
 ---
 
@@ -15,6 +15,7 @@
 | 认证 | JWT（jjwt 0.9.1），管理端/用户端密钥隔离 |
 | 通信 | WebSocket（来单提醒、催单） |
 | 微服务 | Spring Cloud 2021.0.4 + Spring Cloud Alibaba 2021.0.4.0、Nacos 2.3.2、OpenFeign |
+| 消息队列 | RabbitMQ 3.12 + Spring AMQP（发布确认、批量消费、重试、死信队列） |
 | 文档 | Knife4j / Swagger2 |
 | 其他 | Druid、Lombok、fastjson、Apache POI、阿里云 OSS、微信支付 SDK |
 
@@ -45,6 +46,7 @@ flowchart LR
     end
 
     R[("Nacos 2.3.2<br/>注册发现")]
+    M[("RabbitMQ<br/>comment.analyze.queue")]
     H[("MySQL 8.0<br/>业务表 + stock_log + ai_call_log")]
     I[("Redis<br/>缓存 / 幂等键 / 熔断开关")]
     J["阿里云 OSS"]
@@ -65,6 +67,9 @@ flowchart LR
     O --> P --> Q
     P --> H
     P --> I
+
+    C -->|"评价提交"| M
+    M -->|"批量消费"| D
 ```
 
 ## 模块
@@ -81,7 +86,7 @@ sky-take-out
 
 ### 1. 本地运行
 
-前置：JDK 8+（本机验证用 JDK 21）、Maven 3.8+、MySQL 8.0、Redis 6+、Nacos 2.3.2（单机）。
+前置：JDK 8+（本机验证用 JDK 21）、Maven 3.8+、MySQL 8.0、Redis 6+、RabbitMQ 3.12+、Nacos 2.3.2（单机）。
 
 ```bash
 # 1）初始化数据库
@@ -93,26 +98,32 @@ mysql -uroot -p123456 sky_take_out < docs/sql/V2_stock.sql
 # 2）启动 Redis（示例）
 redis-server
 
-# 3）启动 Nacos 单机（下载 nacos-server-2.3.2.zip 并解压）
+# 3）启动 RabbitMQ（本机验收用 WSL；也可用 Docker/本机安装）
+#    wsl -d Ubuntu-24.04 -u root service rabbitmq-server start
+#    docker run -d --name sky-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3.13-management
+#    管理台 http://127.0.0.1:15672（本机验收用户 sky / sky123）
+
+# 4）启动 Nacos 单机（下载 nacos-server-2.3.2.zip 并解压）
 #    https://download.nacos.io/nacos-server/nacos-server-2.3.2.zip
 #    Windows: nacos\bin\startup.cmd -m standalone
 #    Linux/macOS: nacos/bin/startup.sh -m standalone
 #    控制台 http://127.0.0.1:8848/nacos
 
-# 4）构建（sky-ai-server + sky-server）
+# 5）构建（sky-ai-server + sky-server）
 mvn -DskipTests package
 
-# 5）启动 AI 服务（8081），必须在当前会话显式设置 Key
+# 6）启动 AI 服务（8081），必须在当前会话显式设置 Key
 #    Windows PowerShell: $env:DEEPSEEK_API_KEY='sk-...'
 #    Linux/macOS:        export DEEPSEEK_API_KEY='sk-...'
 java -jar sky-ai-server/target/sky-ai-server-1.0-SNAPSHOT.jar
 
-# 6）启动主服务（8080）
+# 7）启动主服务（8080）
 java -jar sky-server/target/sky-server-1.0-SNAPSHOT.jar
 ```
 
-默认端口：主服务 `8080`、AI 服务 `8081`、Nacos `8848`。数据库/Redis/Nacos 地址见
-`sky-server/src/main/resources/application-dev.yml` 与 `sky-ai-server/src/main/resources/application.yml`。
+默认端口：主服务 `8080`、AI 服务 `8081`、Nacos `8848`、RabbitMQ `5672`（管理台 `15672`）。
+数据库/Redis/Nacos/RabbitMQ 地址见 `sky-server/src/main/resources/application-dev.yml`、
+`sky-server/src/main/resources/application.yml` 与 `sky-ai-server/src/main/resources/application.yml`。
 
 > 没起 Nacos 时，主服务仍可用（`NACOS_DISCOVERY_ENABLED=false`），但 AI 接口会走本地热销降级；
 > 要看完整 Feign 链路，必须同时启动 Nacos 与 `sky-ai-server`。
@@ -121,15 +132,15 @@ java -jar sky-server/target/sky-server-1.0-SNAPSHOT.jar
 
 ```bash
 cp .env.example .env
-docker compose up -d          # mysql + redis + app
+docker compose up -d          # mysql + redis + rabbitmq + app
 docker compose logs -f app
 ```
 
 首次启动会自动执行 `docs/sql/` 下的建表与增量脚本。
 
-> compose 目前只编排 MySQL + Redis + 主服务，并通过 `NACOS_DISCOVERY_ENABLED=false` 关闭注册发现；
-> 此时 AI 接口走本地降级，不影响点餐主链路。要跑完整 Nacos + Feign 链路，按「本地运行」启动
-> Nacos 与 `sky-ai-server`（Dockerfile 已同时构建两个 jar，可用 `--entrypoint` 覆盖启动 AI 服务）。
+> compose 编排 MySQL + Redis + RabbitMQ + 主服务，并通过 `NACOS_DISCOVERY_ENABLED=false` 关闭注册发现；
+> 此时 AI 接口走本地降级，评价异步分析仍可正常走 RabbitMQ。要跑完整 Nacos + Feign 链路，按「本地运行」
+> 启动 Nacos 与 `sky-ai-server`（Dockerfile 已同时构建两个 jar，可用 `--entrypoint` 覆盖启动 AI 服务）。
 
 ## 接口文档
 
@@ -327,8 +338,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs/verify/t09-verify.ps1  
 mvn test
 ```
 
-T14 的微服务验证需要先启动 Nacos、`sky-ai-server` 与主服务，命令与输出见
-[docs/verification.md](docs/verification.md) 的「T14 微服务拆分」。
+T14 的微服务验证需要先启动 Nacos、`sky-ai-server` 与主服务；T15 需要先启动 RabbitMQ 与主服务。
+命令与输出见 [docs/verification.md](docs/verification.md) 的「T14 微服务拆分」与「T15 评价异步分析」。
 
 关键结果：
 
@@ -437,6 +448,51 @@ Nacos Client 2.0.4 与 Server 2.3.2 实测注册/发现正常，未额外升级�
 
 完整命令与输出见 [docs/verification.md](docs/verification.md) 的 T14。
 
+## 评价异步分析（T15 / 6.2 A）
+
+评价提交后不阻塞用户请求：评价先落库，再发 RabbitMQ；消费者批量做规则分析，失败重试，重试耗尽进死信队列。
+
+### 拓扑
+
+```
+comment.exchange --comment.analyze--> comment.analyze.queue
+                                          | x-dead-letter-exchange = comment.dlx
+                                          v
+                                     comment.dlx --comment.analyze.dlq--> comment.analyze.dlq
+```
+
+| 组件 | 配置 |
+|---|---|
+| 交换机 | `comment.exchange`（direct，durable） |
+| 主队列 | `comment.analyze.queue`，绑定 key `comment.analyze`，带 DLX 参数 |
+| 死信 | `comment.dlx` → `comment.analyze.dlq` |
+| 消息体 | `CommentAnalyzeMessage`：`commentId/orderId/score/submittedAt`，只传 id，消费端回表 |
+| 批量 | `batch-size=20`、`receive-timeout=1s`；一次最多 20 条，1s 没攒满也触发 |
+| 重试 | `RetryTemplate` 3 次，指数退避 1s → 2s |
+| 版本 | RabbitMQ 3.12.1 / Spring AMQP 2.4.6 / amqp-client 5.14.2 |
+
+### 关键设计
+
+- **发布确认**：`publisher-confirm-type=correlated` + `publisher-returns=true` + `mandatory=true`；`CorrelationData` 关联消息，nack/路由失败写 ERROR 日志。
+- **发布失败不反向失败评价**：`CommentMessageProducer` 捕获发送异常；评价已经落库，管理员可调 `/admin/comment/analyze` 补偿，避免 MQ 故障把提交接口拖成 500。
+- **批量消费**：`SimpleRabbitListenerContainerFactory` 显式开启 `batchListener` + `consumerBatchEnabled`，方法参数为 `List<CommentAnalyzeMessage>`。
+- **幂等**：`comment_analysis` 的 `uk_comment` 唯一键 + `upsert`，重复投递只覆盖、不新增；同一批里重复 id 也只落一行。
+- **失败重试 + 死信**：消费者内 `RetryTemplate` 重试整批 3 次；耗尽后逐条转发到 `comment.dlx`，随后正常返回让原消息 ack，避免毒消息无限重投；队列本身仍保留 DLX 参数作为兜底。
+- **测试隔离**：`sky.mq.enabled=false` 可关闭队列声明与消费者，单元测试不依赖 RabbitMQ。
+
+### 实测
+
+| 场景 | 结果 |
+|---|---|
+| 5 条评价快速提交 | 消费端一次收到 **5 条**，一次批量分析 5 条，队列积压 0 |
+| 重复投递同一个 commentId ×2 | `消息=2 条, 实际分析=1 条`，DB 仍只有 1 行 |
+| 毒消息 `commentId=999999` | 3 次 WARN（间隔 1s/2s）+ ERROR“重试耗尽, 转死信队列”，DLQ 1 条 |
+| MQ 停机时提交评价 | HTTP 200 / 51ms，评价落库、analysis=0；恢复后 `/admin/comment/analyze` 补偿成功 |
+| RabbitMQ 重启 | 监听器自动重连，新评价继续消费，无需重启主服务 |
+| 单测 | `mvn test`：6 个全绿 |
+
+> 6.2 选 A 而不是 B：把 RabbitMQ 放在“评价 → 离线分析”这条旁路，改动集中在 `CommentServiceImpl` 和新增 `com.sky.mq`，不动订单主链路；订单超时已经有 ZSet 延迟队列在跑，没必要为了用 MQ 再换一次。
+
 ## Roadmap
 
 - [x] T01 用户端微信登录 + JWT 拦截器（双端隔离）
@@ -456,7 +512,7 @@ Nacos Client 2.0.4 与 Server 2.3.2 实测注册/发现正常，未额外升级�
 - [x] T12.6 种子脚本（7/30 天可选、可清理、可复现）与看板任意时间段查询
 - [x] T13 菜品销量预测（MA7×星期系数，holdout MAPE，附小样本结论）
 - [x] T14 按业务边界拆出 sky-ai-server（Nacos 注册发现 + OpenFeign + fallback）
-- [ ] T15 RabbitMQ 异步化（评价分析削峰 / 订单超时延迟消息，二选一）
+- [x] T15 RabbitMQ 异步化（方案 A：评价提交后批量分析 + 重试 + 死信队列）
 - [ ] 语音智能体（讯飞 ASR/TTS 流式接入，放 Roadmap）
 
 > T07 说明：报表模板行数固定 30 行，未引入 SXSSF 流式导出；真实瓶颈是「按天循环查库」，
@@ -471,3 +527,6 @@ Nacos Client 2.0.4 与 Server 2.3.2 实测注册/发现正常，未额外升级�
 - 启动应用时需显式传入 `DEEPSEEK_API_KEY`（`Start-Process` 启动的进程不继承用户环境变量）
 - Feign fallback 的 Resilience4j TimeLimiter 默认 1s，模型调用超过 1s 会被误判超时；已调到 10s
 - 本地双服务需同时启动 Nacos 2.3.2 与 `sky-ai-server`；Docker Compose 暂未编排这两个组件，AI 接口会降级
+- RabbitMQ 本机验收跑在 WSL Ubuntu 24.04（`service rabbitmq-server start`），Windows 侧通过 `localhost:5672/15672` 访问；Docker Hub 当前拉取镜像超时，未用容器验证
+- Spring AMQP 批量监听需要自定义 `SimpleRabbitListenerContainerFactory` 并显式 `setBatchListener(true)`，只配 Boot 的 `consumer-batch-enabled` 不够
+- 无 RabbitMQ 环境测试时加 `sky.mq.enabled=false`，否则测试上下文会尝试声明队列/连接 broker

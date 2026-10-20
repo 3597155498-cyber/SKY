@@ -31,6 +31,19 @@ spring:
     password: ${sky.redis.password}
     database: ${sky.redis.database}
 
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:sky}
+    password: ${RABBITMQ_PASSWORD:sky123}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    connection-timeout: 3000
+    # 发布确认 + 路由失败返回，用于记录消息是否真的到达 broker
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+
 feign:
   circuitbreaker:
     # feign fallback 需要 circuit breaker 运行时；这里用 Resilience4j，不引入 Sentinel
@@ -87,3 +100,8 @@ sky:
     # 主服务只保留本地降级所需参数；模型/限流/人格配置已随服务迁到 sky-ai-server
     max-items: 5
     circuit-ttl-seconds: 15
+  mq:
+    enabled: ${SKY_MQ_ENABLED:true}
+    comment:
+      # 批量消费上限；1s 没攒满也会触发
+      batch-size: 20

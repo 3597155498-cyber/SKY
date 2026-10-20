@@ -37,6 +37,11 @@ public interface CommentMapper {
     @Select("select * from comment where create_time between #{begin} and #{end}")
     List<Comment> listByRange(@Param("begin") LocalDateTime begin, @Param("end") LocalDateTime end);
 
+    @Select("<script>select * from comment where id in " +
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>" +
+            "</script>")
+    List<Comment> listByIds(@Param("ids") List<Long> ids);
+
     @Select("select count(*) from comment")
     Integer countAll();
 

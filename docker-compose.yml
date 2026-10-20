@@ -32,6 +32,21 @@ services:
       timeout: 3s
       retries: 12
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: sky-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-sky}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-sky123}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   app:
     build: .
     container_name: sky-app
@@ -40,11 +55,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
       MYSQL_HOST: mysql
       REDIS_HOST: redis
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-sky}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-sky123}
       WECHAT_MOCK: "true"
       # compose 未内置 Nacos/AI 服务：关闭注册发现，AI 接口走本地降级，单体链路仍可用
       NACOS_DISCOVERY_ENABLED: "false"

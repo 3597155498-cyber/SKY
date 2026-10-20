@@ -10,6 +10,7 @@ import com.sky.exception.BaseException;
 import com.sky.mapper.CommentAnalysisMapper;
 import com.sky.mapper.CommentMapper;
 import com.sky.mapper.OrderMapper;
+import com.sky.mq.CommentMessageProducer;
 import com.sky.result.PageResult;
 import com.sky.service.AiGatewayService;
 import com.sky.service.CommentService;
@@ -69,6 +70,8 @@ public class CommentServiceImpl implements CommentService {
     private StringRedisTemplate stringRedisTemplate;
     @Autowired
     private AiGatewayService aiGatewayService;
+    @Autowired
+    private CommentMessageProducer commentMessageProducer;
 
     @Autowired
     private com.sky.cache.CacheClient cacheClient;
@@ -99,14 +102,17 @@ public class CommentServiceImpl implements CommentService {
         if (commentMapper.getByOrderId(commentDTO.getOrderId()) != null) {
             throw new BaseException("该订单已评价");
         }
-        commentMapper.insert(Comment.builder()
+        Comment comment = Comment.builder()
                 .orderId(commentDTO.getOrderId())
                 .userId(userId)
                 .score(commentDTO.getScore())
                 .content(commentDTO.getContent().trim())
                 .createTime(LocalDateTime.now())
-                .build());
-        log.info("用户评价提交成功, userId={}, orderId={}, score={}", userId, commentDTO.getOrderId(), commentDTO.getScore());
+                .build();
+        commentMapper.insert(comment);
+        commentMessageProducer.publish(comment);
+        log.info("用户评价提交成功并投递异步分析, userId={}, orderId={}, commentId={}, score={}",
+                userId, commentDTO.getOrderId(), comment.getId(), commentDTO.getScore());
     }
 
     @Override
@@ -115,23 +121,44 @@ public class CommentServiceImpl implements CommentService {
         if (CollectionUtils.isEmpty(pending)) {
             return 0;
         }
-        int count = 0;
         LocalDateTime now = LocalDateTime.now();
         for (Comment comment : pending) {
-            String themes = extractThemes(comment.getContent());
-            String sentiment = detectSentiment(comment.getScore(), comment.getContent());
-            commentAnalysisMapper.upsert(CommentAnalysis.builder()
-                    .commentId(comment.getId())
-                    .sentiment(sentiment)
-                    .themes(themes)
-                    .analyzedBy("RULE")
-                    .createTime(now)
-                    .build());
-            count++;
+            analyze(comment, now);
         }
         log.info("评价分析完成, 本次分析 {} 条, 剩余 {} 条",
-                count, Math.max(0, commentMapper.countAll() - analyzedCount()));
-        return count;
+                pending.size(), Math.max(0, commentMapper.countAll() - analyzedCount()));
+        return pending.size();
+    }
+
+    @Override
+    public int analyzeByIds(List<Long> commentIds) {
+        if (CollectionUtils.isEmpty(commentIds)) {
+            return 0;
+        }
+        List<Comment> comments = commentMapper.listByIds(commentIds);
+        if (CollectionUtils.isEmpty(comments)) {
+            // 消息指向不存在的评价：按毒消息处理，让 Retry/DLX 接管，避免静默丢失
+            log.warn("MQ 批量分析未找到评价, commentIds={}", commentIds);
+            throw new IllegalStateException("评价不存在: " + commentIds);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        for (Comment comment : comments) {
+            analyze(comment, now);
+        }
+        log.info("MQ 批量分析落库完成, 请求 {} 条, 实际 {} 条", commentIds.size(), comments.size());
+        return comments.size();
+    }
+
+    private void analyze(Comment comment, LocalDateTime now) {
+        String themes = extractThemes(comment.getContent());
+        String sentiment = detectSentiment(comment.getScore(), comment.getContent());
+        commentAnalysisMapper.upsert(CommentAnalysis.builder()
+                .commentId(comment.getId())
+                .sentiment(sentiment)
+                .themes(themes)
+                .analyzedBy("RULE")
+                .createTime(now)
+                .build());
     }
 
     @Override

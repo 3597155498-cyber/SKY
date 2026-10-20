@@ -1,6 +1,6 @@
 # 验证记录
 
-> 每条记录对应一张改造任务卡，命令可复跑。环境：Windows 10/11 + JDK 21 + Maven 3.9.16 + MySQL 8.0.43 + Redis（本机 6379/db1）+ Nacos 2.3.2（T14 起）。
+> 每条记录对应一张改造任务卡，命令可复跑。环境：Windows 10/11 + JDK 21 + Maven 3.9.16 + MySQL 8.0.43 + Redis（本机 6379/db1）+ Nacos 2.3.2（T14 起）+ RabbitMQ 3.12.1（T15 起，WSL）。
 
 ## 环境自检（P4）
 
@@ -499,3 +499,206 @@ ai_call_log: id=850 prompt_tokens=195 completion_tokens=39 cost_ms=1249
    `curl.exe --data-binary @file` 发 UTF-8，落盘后用 UTF-8 读取。
 5. **AI 服务直连安全**：`/ai/recommendSync` 强制要求 `X-User-Id`，避免绕过主服务 JWT 直接刷模型额度；
    `/ai/tag/refresh`、`/ai/status` 只允许内网访问（未暴露到公网）。
+
+---
+
+## T15 评价异步分析（RabbitMQ，6.2 方案 A）
+
+目标：评价提交后只落库 + 发消息，消费者批量做规则分析；失败重试 3 次，重试耗尽进死信队列。
+选 A 不选 B：不动订单超时主链路，改动集中在评价旁路，风险低。
+
+### 环境
+
+| 组件 | 版本/地址 |
+|---|---|
+| RabbitMQ | 3.12.1（WSL Ubuntu 24.04，`127.0.0.1:5672`） |
+| 管理台 | `http://127.0.0.1:15672`，验收用户 `sky / sky123` |
+| Spring AMQP | 2.4.6（Boot 2.7.3 管理） |
+| amqp-client | 5.14.2 |
+
+启动（本机验收用 WSL；也可换成 Docker/本机安装）：
+
+```powershell
+wsl -d Ubuntu-24.04 -u root service rabbitmq-server start
+# 首次需要管理台时：
+wsl -d Ubuntu-24.04 -u root rabbitmq-plugins enable rabbitmq_management
+```
+
+应用配置（`sky-server/src/main/resources/application.yml`）：
+
+```yaml
+spring:
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:sky}
+    password: ${RABBITMQ_PASSWORD:sky123}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+```
+
+### 拓扑
+
+```
+comment.exchange --comment.analyze--> comment.analyze.queue
+                                          | x-dead-letter-exchange = comment.dlx
+                                          v
+                                     comment.dlx --comment.analyze.dlq--> comment.analyze.dlq
+```
+
+- 队列 `comment.analyze.queue`：durable，带 `x-dead-letter-exchange=comment.dlx`、
+  `x-dead-letter-routing-key=comment.analyze.dlq`
+- 批量参数：`batch-size=20`、`receive-timeout=1s`；`@RabbitListener` 参数为 `List<CommentAnalyzeMessage>`
+- 重试：消费者内 `RetryTemplate`，3 次，退避 1s → 2s
+- 幂等：`comment_analysis.uk_comment` 唯一键 + `upsert`
+
+### V1 正常批量消费
+
+连续提交 5 条评价（订单 1286–1290）：
+
+```powershell
+# 每条：POST /user/comment，header authentication，body 为 UTF-8 文件
+# {"orderId":1286,"score":1,"content":"配送太慢，汤洒了，分量也少"}
+```
+
+应用日志：
+
+```
+23:44:26.8xx  INFO  CommentMessageProducer : 评价消息已投递, commentId=1315..1319
+23:44:28.008  INFO  CommentServiceImpl  : MQ 批量分析落库完成, 请求 5 条, 实际 5 条
+23:44:28.010  INFO  CommentAnalyzeConsumer : MQ 批量分析完成, 消息=5 条, 实际分析=5 条,
+                  commentIds=[1315, 1316, 1317, 1318, 1319]
+```
+
+队列/分析结果：
+
+```
+comment.analyze.queue: messages=0 consumers=1
+comment_analysis: 5 行，sentiment/themes 已写入
+```
+
+结论：5 条消息在 1 个批次内消费，批量落库；用户提交接口不等待分析。
+
+### V2 重复投递幂等
+
+向 `comment.exchange` 重复投递同一个 `commentId=1310` 两次：
+
+```powershell
+# 管理台 API 发布（payload 的 __TypeId__ 必须是消息类）
+POST /api/exchanges/%2F/comment.exchange/publish
+{"properties":{"content_type":"application/json","delivery_mode":2,
+  "headers":{"__TypeId__":"com.sky.mq.CommentAnalyzeMessage"}},
+ "routing_key":"comment.analyze",
+ "payload":"{\"commentId\":1310,\"orderId\":1291,\"score\":5}",
+ "payload_encoding":"string"}
+```
+
+结果：
+
+```
+23:42:39.755  INFO  CommentAnalyzeConsumer : MQ 批量分析完成, 消息=2 条, 实际分析=1 条,
+                  commentIds=[1310, 1310]
+comment_analysis where comment_id=1310 -> 1 行
+```
+
+结论：重复消息只会覆盖同一行，不会产生重复分析记录；`listByIds` 对重复 id 也只回一行。
+
+### V3 失败重试 + 死信队列
+
+投递一条指向不存在评价的毒消息（`commentId=999999`）：
+
+```powershell
+# 同上 publish API；payload: {"commentId":999999,"orderId":0,"score":1}
+```
+
+消费日志（3 次尝试，间隔 1s/2s）：
+
+```
+23:42:16.585  WARN  CommentServiceImpl : MQ 批量分析未找到评价, commentIds=[999999]
+23:42:17.599  WARN  CommentServiceImpl : MQ 批量分析未找到评价, commentIds=[999999]
+23:42:19.608  WARN  CommentServiceImpl : MQ 批量分析未找到评价, commentIds=[999999]
+23:42:19.613  ERROR CommentAnalyzeConsumer : 评价批量分析重试耗尽, 转死信队列, 消息=1 条,
+                  commentIds=[999999]
+```
+
+队列状态（`rabbitmqctl list_queues`）：
+
+```
+comment.analyze.queue    messages=0
+comment.analyze.dlq      messages=1
+```
+
+死信消息内容（管理台 get）：
+
+```json
+{"commentId":999999,"orderId":0,"score":1,"submittedAt":null}
+```
+
+结论：重试 3 次后逐条转发到 `comment.dlx`，原消息 ack；毒消息不会无限重投，也不会阻塞后续批次
+（同一批里的正常消息会随整批一起进入死信，这是批量重试的取舍）。
+
+### V4 发布失败兜底（MQ 停机）
+
+停掉 RabbitMQ 应用（`rabbitmqctl stop_app`）后提交评价（订单 1301）：
+
+```powershell
+POST /user/comment
+{"orderId":1301,"score":2,"content":"MQ 停机时的评价，先落库"}
+```
+
+结果：
+
+```
+HTTP 200, wallMs=51
+DB: comment id=1320, order_id=1301, analyzed=0
+LOG 23:45:27.200 ERROR CommentMessageProducer : 评价消息投递失败, commentId=1320,
+      评价已保存，可用 /admin/comment/analyze 补偿
+```
+
+结论：MQ 故障不把用户提交打成 500，评价先落库；消息没有进队列，需要补偿。
+
+恢复 RabbitMQ 后调管理端补偿：
+
+```powershell
+POST /admin/comment/analyze?limit=200   # token 头
+# -> {"code":1,"data":1}
+```
+
+```
+DB: comment id=1320, analyzed=1
+```
+
+### V5 恢复后消费自动恢复
+
+`rabbitmqctl start_app` 后，再提交一条评价（订单 1302）：
+
+```
+23:45:43.777 INFO CommentAnalyzeConsumer : MQ 批量分析完成, 消息=1 条, 实际分析=1 条,
+                 commentIds=[1321]
+comment.analyze.queue: messages=0 consumers=1
+```
+
+结论：Spring AMQP 监听容器自动重连，恢复后新评价继续走 MQ，无需重启主服务。
+
+### V6 测试
+
+```powershell
+mvn -B test
+# Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
+```
+
+测试类通过 `sky.mq.enabled=false` 关闭队列声明与消费者，不依赖 RabbitMQ。
+
+### 踩坑
+
+1. **PowerShell 5.1 写 JSON 文件默认带 BOM**：管理台 API 会返回 `{"error":"bad_request","reason":"not_json"}`。
+   用 `New-Object System.Text.UTF8Encoding($false)` 写无 BOM 文件。
+2. **Spring AMQP 批量监听要显式开 `batchListener`**：只配 Boot 的 `consumer-batch-enabled` 不够；
+   自定义 `SimpleRabbitListenerContainerFactory` 并 `setBatchSize`、`setReceiveTimeout`。
+3. **重试 advice 在批量监听器上与 `RejectAndDontRequeueRecoverer` 组合行为不稳定**：改为消费者内
+   `RetryTemplate` + 显式转发死信，行为可观测、可复跑。
+4. **Docker Hub 拉取超时**：本机 Docker daemon 可用但 `rabbitmq:3.13-management` 拉不下来；
+   验收改用 WSL Ubuntu 的 `rabbitmq-server 3.12.1`。Docker Compose 已补 RabbitMQ 服务，
+   但未实际 `compose up`。
