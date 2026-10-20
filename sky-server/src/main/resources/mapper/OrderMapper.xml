@@ -11,6 +11,19 @@
                 #{estimatedDeliveryTime}, #{deliveryStatus}, #{packAmount}, #{tablewareNumber}, #{tablewareStatus})
     </insert>
 
+    <update id="updateStatusIfMatch">
+        update orders
+        <set>
+            <if test="cancelReason != null">cancel_reason = #{cancelReason},</if>
+            <if test="rejectionReason != null">rejection_reason = #{rejectionReason},</if>
+            <if test="cancelTime != null">cancel_time = #{cancelTime},</if>
+            <if test="payStatus != null">pay_status = #{payStatus},</if>
+            <if test="deliveryTime != null">delivery_time = #{deliveryTime},</if>
+            status = #{toStatus}
+        </set>
+        where id = #{id} and status = #{fromStatus}
+    </update>
+
     <select id="pageQuery" resultType="Orders">
         select * from orders
         <where>

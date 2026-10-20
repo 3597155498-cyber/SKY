@@ -5,6 +5,7 @@ import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
 import com.sky.WebSocket.WebSocketServer;
 import com.sky.constant.MessageConstant;
+import com.sky.constant.OrderStatusTransfer;
 import com.sky.constant.OrderTimeoutConstant;
 import com.sky.constant.StockBizType;
 import com.sky.context.BaseContext;
@@ -297,16 +298,19 @@ public class OrderServiceImpl implements OrderService {
 
         Orders orders = new Orders();
         orders.setId(ordersDB.getId());
+        Integer payStatus = null;
         if (Orders.TO_BE_CONFIRMED.equals(ordersDB.getStatus())
                 && Orders.PAID.equals(ordersDB.getPayStatus())) {
             refund(ordersDB);
-            orders.setPayStatus(Orders.REFUND);
+            payStatus = Orders.REFUND;
         }
 
-        orders.setStatus(Orders.CANCELLED);
-        orders.setCancelReason("用户取消");
-        orders.setCancelTime(LocalDateTime.now());
-        orderMapper.update(orders);
+        //条件更新：与商家接单/派送并发时只有一方能成功
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(), Orders.CANCELLED,
+                "用户取消", null, LocalDateTime.now(), payStatus, null);
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
         //回补库存
         stockService.restoreForOrder(ordersDB.getId(), StockBizType.CANCEL);
     }
@@ -396,15 +400,15 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public void confirm(OrdersConfirmDTO ordersConfirmDTO) {
         Orders ordersDB = orderMapper.getById(ordersConfirmDTO.getId());
-        if (ordersDB == null || !Orders.TO_BE_CONFIRMED.equals(ordersDB.getStatus())) {
+        if (ordersDB == null || !OrderStatusTransfer.canTransfer(ordersDB.getStatus(), Orders.CONFIRMED)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
-
-        Orders orders = Orders.builder()
-                .id(ordersConfirmDTO.getId())
-                .status(Orders.CONFIRMED)
-                .build();
-        orderMapper.update(orders);
+        //条件更新：并发下只有一方能把 待接单 改为 已接单
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(), Orders.CONFIRMED,
+                null, null, null, null, null);
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 
     /**
@@ -414,20 +418,20 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public void rejection(OrdersRejectionDTO ordersRejectionDTO) throws Exception {
         Orders ordersDB = orderMapper.getById(ordersRejectionDTO.getId());
-        if (ordersDB == null || !Orders.TO_BE_CONFIRMED.equals(ordersDB.getStatus())) {
+        if (ordersDB == null || !OrderStatusTransfer.canTransfer(ordersDB.getStatus(), Orders.CANCELLED)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
 
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
+        Integer payStatus = null;
         if (Orders.PAID.equals(ordersDB.getPayStatus())) {
             refund(ordersDB);
-            orders.setPayStatus(Orders.REFUND);
+            payStatus = Orders.REFUND;
         }
-        orders.setStatus(Orders.CANCELLED);
-        orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
-        orders.setCancelTime(LocalDateTime.now());
-        orderMapper.update(orders);
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(), Orders.CANCELLED,
+                null, ordersRejectionDTO.getRejectionReason(), LocalDateTime.now(), payStatus, null);
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
         //回补库存
         stockService.restoreForOrder(ordersDB.getId(), StockBizType.REJECT);
     }
@@ -439,21 +443,23 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public void cancel(OrdersCancelDTO ordersCancelDTO) throws Exception {
         Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
-        if (ordersDB == null || Orders.CANCELLED.equals(ordersDB.getStatus())
-                || Orders.COMPLETED.equals(ordersDB.getStatus())) {
+        if (ordersDB == null) {
+            throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
+        }
+        if (!OrderStatusTransfer.canTransfer(ordersDB.getStatus(), Orders.CANCELLED)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
 
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
+        Integer payStatus = null;
         if (Orders.PAID.equals(ordersDB.getPayStatus())) {
             refund(ordersDB);
-            orders.setPayStatus(Orders.REFUND);
+            payStatus = Orders.REFUND;
         }
-        orders.setStatus(Orders.CANCELLED);
-        orders.setCancelReason(ordersCancelDTO.getCancelReason());
-        orders.setCancelTime(LocalDateTime.now());
-        orderMapper.update(orders);
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(), Orders.CANCELLED,
+                ordersCancelDTO.getCancelReason(), null, LocalDateTime.now(), payStatus, null);
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
         //回补库存
         stockService.restoreForOrder(ordersDB.getId(), StockBizType.CANCEL);
     }
@@ -464,14 +470,14 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public void delivery(Long id) {
         Orders ordersDB = orderMapper.getById(id);
-        if (ordersDB == null || !Orders.CONFIRMED.equals(ordersDB.getStatus())) {
+        if (ordersDB == null || !OrderStatusTransfer.canTransfer(ordersDB.getStatus(), Orders.DELIVERY_IN_PROGRESS)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
-
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
-        orders.setStatus(Orders.DELIVERY_IN_PROGRESS);
-        orderMapper.update(orders);
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(),
+                Orders.DELIVERY_IN_PROGRESS, null, null, null, null, null);
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 
     /**
@@ -480,15 +486,14 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public void complete(Long id) {
         Orders ordersDB = orderMapper.getById(id);
-        if (ordersDB == null || !Orders.DELIVERY_IN_PROGRESS.equals(ordersDB.getStatus())) {
+        if (ordersDB == null || !OrderStatusTransfer.canTransfer(ordersDB.getStatus(), Orders.COMPLETED)) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
-
-        Orders orders = new Orders();
-        orders.setId(ordersDB.getId());
-        orders.setStatus(Orders.COMPLETED);
-        orders.setDeliveryTime(LocalDateTime.now());
-        orderMapper.update(orders);
+        int rows = orderMapper.updateStatusIfMatch(ordersDB.getId(), ordersDB.getStatus(), Orders.COMPLETED,
+                null, null, null, null, LocalDateTime.now());
+        if (rows == 0) {
+            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+        }
     }
 
     private OrderVO toOrderVO(Orders orders) {

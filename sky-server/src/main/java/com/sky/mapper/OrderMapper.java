@@ -98,6 +98,19 @@ public interface OrderMapper {
                            @Param("cancelTime") LocalDateTime cancelTime);
 
     /**
+     * 条件更新订单状态：只有当前状态等于 fromStatus 时才更新。
+     * 并发场景（商家接单 vs 用户取消）下，只有一方能更新成功（返回 1），另一方返回 0。
+     */
+    int updateStatusIfMatch(@Param("id") Long id,
+                            @Param("fromStatus") Integer fromStatus,
+                            @Param("toStatus") Integer toStatus,
+                            @Param("cancelReason") String cancelReason,
+                            @Param("rejectionReason") String rejectionReason,
+                            @Param("cancelTime") LocalDateTime cancelTime,
+                            @Param("payStatus") Integer payStatus,
+                            @Param("deliveryTime") LocalDateTime deliveryTime);
+
+    /**
      * 按天聚合营业额（一次查询替代"每天查一次"）
      */
     @Select("select date_format(order_time, '%Y-%m-%d') as d, sum(amount) as v from orders " +

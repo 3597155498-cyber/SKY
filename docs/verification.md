@@ -96,3 +96,81 @@ PASS  V6 cancel logs: 9
 | 镜像构建与 `compose up` | 三容器可用 | ⚠️ 未验证：本机 Docker Desktop 守护进程未运行（`npipe:////./pipe/dockerDesktopLinuxEngine` 连接失败）。编排文件已通过语法解析，待守护进程启动后补验 |
 
 交付物：`README.md`、`Dockerfile`、`docker-compose.yml`、`.dockerignore`、`.env.example`、`application-docker.yml`、`docs/sql/V1_user_auth.sql`（补 T01 的唯一索引）。
+
+---
+
+## T04 超时订单：Redis ZSet 延迟队列
+
+脚本：`docs/verify/t04-verify.ps1`
+
+```
+PASS  V1 in timeout zset: True            （下单后自动入队，score = 下单时间 + 15min）
+PASS  V1 score ~ now+15min: True
+PASS  V2 order cancelled: 6               （模拟到期后 3 秒内被取消）
+PASS  V2 stock restored: 100
+PASS  V2 TIMEOUT stock_log: 1             （回补流水按 biz_type=TIMEOUT 记录）
+PASS  V2 removed from zset: 0             （ZREM 抢占成功才处理）
+PASS  V3 no duplicate restore: 1          （重复入队不会二次回补，uk_once 拦截）
+PASS  V4 paid order not cancelled: 2      （已支付订单不会被超时任务误取消）
+```
+
+## T05 WebSocket 加固
+
+脚本：`docs/verify/t05-verify.ps1`
+
+```
+PASS  V1 reminder type=2: True            （收到 {"orderId":42,"type":2,...}）
+PASS  V2 broadcast after mass disconnect: True   （50 连接并发连/断后广播仍可用）
+PASS  V3 reminder after client gone: 1    （客户端消失后服务端无异常，死连接被清理）
+```
+
+## T06 手写缓存层
+
+脚本：`docs/verify/t06-verify.ps1`
+
+```
+PASS  V1 second call hits cache (< first): True
+PASS  V2 empty result cached: True
+PASS  V3 single rebuild, not 50x: True     （50 并发冷 key，总查询 63 vs 无缓存 450）
+PASS  V4 ttl jitter present: True          （4 个 key 的 TTL 跨 420 秒）
+PASS  V5 cache not evicted by ordering: 1  （下单 5 次后缓存仍在，库存实时反映）
+PASS  V6 setmeal cache cleared / dish cache untouched: True（精准失效）
+```
+
+## T07 报表聚合与索引
+
+脚本：`docs/verify/t07-verify.ps1`
+
+```
+PASS  V1 no per-day query (<= 15): True    （30 天三类统计共 8 条 SQL，旧实现约 90 条）
+PASS  V2 export xlsx magic bytes (PK): True（导出 10 KB 的 xlsx）
+PASS  V3 orders/dish/user 索引存在
+```
+
+说明：报表模板行数固定 30 行，**未引入 SXSSF 流式导出**——没有大数据量场景，硬上属于为技术而技术。本卡的真实瓶颈是"按天循环查库"，已用一次 GROUP BY 聚合替代。
+
+## T08 测试
+
+```
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0   BUILD SUCCESS
+- OrderStatusTransferTest：合法/非法状态流转（纯单元测试）
+- CacheClientTest：缓存命中后回源只执行一次（@SpringBootTest RANDOM_PORT）
+```
+
+注意：`@SpringBootTest` 默认 MOCK 环境会因 `ServerEndpointExporter` 报 `ServerContainer not available`，需用 `webEnvironment = RANDOM_PORT`。
+
+## T09 订单状态机
+
+- 新增 `OrderStatusTransfer`（1→2/6，2→3/6，3→4/6，4→5/6，终态不可流转）
+- 接单/拒单/取消/派送/完成/用户取消 全部改为条件更新 `where id=? and status=fromStatus`
+- SQL 层并发语义验证：
+
+```
+first_update_rows=1
+second_update_rows=0
+final_status=3
+```
+
+- 单元测试：`OrderStatusTransferTest` 全绿
+
+⚠️ 未闭环项：`PUT /admin/order/confirm` 等带 JSON body 的管理端 PUT 接口返回 400（HttpMessageNotReadableException），导致 T09 的 HTTP 级并发脚本无法跑通。该 controller 属 day12 未提交代码，需下一步排查（怀疑自定义消息转换器与 PUT 的组合问题）。
