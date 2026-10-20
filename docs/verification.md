@@ -243,3 +243,14 @@ PASS  T09 duplicate confirm rejected: 0
 1. PowerShell 5.1 `Invoke-RestMethod -Body '字符串'` 会用非 UTF-8 编码发送，中文被丢 → 必须传 UTF-8 字节
 2. `Invoke-RestMethod` 解析响应时按 ANSI 解码，中文变乱码 → 用 `Invoke-WebRequest` + `RawContentStream` 自行 UTF-8 解码
 3. 脚本文件必须带 **UTF-8 BOM**，否则 PS 5.1 按 ANSI 读导致中文语法错误
+### 性能排查记录（从 14s 降到 0.8s）
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| 页面显示 14266ms | 每次调用都 `HttpClients.createDefault()` 新建客户端，重复 TLS 握手 | 改为共享连接池 |
+| — | 额外一次"生成推荐理由"的模型调用（+2~7s） | `reason-enabled=false`，理由用模板 |
+| — | 慢失败还会重试一次，延迟翻倍 | 不重试，失败即降级 |
+
+实测：首次 5344ms（进程内第一次，含 TLS/类加载），后续 835ms，缓存 23ms。
+
+踩坑：`new DefaultProxyRoutePlanner(null)` 会让应用启动失败（构造函数不接受 null），已回退。
