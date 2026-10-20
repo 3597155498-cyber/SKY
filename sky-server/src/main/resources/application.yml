@@ -37,31 +37,11 @@ logging:
 
 sky:
   jwt:
-    # 设置jwt签名加密时使用的秘钥
+    # 管理端令牌配置
     admin-secret-key: itcast
-    # 设置jwt过期时间
     admin-ttl: 7200000
-    # 设置前端传递过来的令牌名称
     admin-token-name: token
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # 用户端令牌配置（与管理端使用不同密钥，双端令牌互不通用）
+    user-secret-key: itheima
+    user-ttl: 7200000
+    user-token-name: authentication

@@ -16,3 +16,7 @@ sky:
     port: 6379
     password:
     database: 1
+  wechat:
+    appid: ${WECHAT_APPID:}
+    secret: ${WECHAT_SECRET:}
+    mock: ${WECHAT_MOCK:true}
