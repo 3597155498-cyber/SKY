@@ -220,4 +220,3 @@ mvn test -Dtest=OrderStatusTransferTest,CacheClientTest
 
 - 微信支付/退款依赖真实商户号，本地为模拟链路
 - 报表前端尚未接入
-- Docker 镜像构建与 `compose up` 未在本机验证（Docker Desktop 守护进程未运行）；`docker compose config` 已通过
