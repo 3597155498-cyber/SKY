@@ -1,4 +1,4 @@
-package com.sky.mapper;
+package com.sky.ai.mapper;
 
 import com.sky.entity.AiCallLog;
 import org.apache.ibatis.annotations.Insert;
@@ -10,6 +10,9 @@ import org.apache.ibatis.annotations.Select;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+/**
+ * AI 调用日志：AI 服务自己写，主服务不再直接写 ai_call_log。
+ */
 @Mapper
 public interface AiCallLogMapper {
 
@@ -19,7 +22,7 @@ public interface AiCallLogMapper {
     int insert(AiCallLog aiCallLog);
 
     /**
-     * 今日统计：调用次数、token 总量、降级次数、平均耗时，供 /user/ai/status 展示
+     * 今日统计：调用次数、token 总量、降级次数、平均耗时，供 /ai/status 展示
      */
     @Select("select count(*) as calls, " +
             "ifnull(sum(prompt_tokens),0) + ifnull(sum(completion_tokens),0) as tokens, " +

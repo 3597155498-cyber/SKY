@@ -2,7 +2,7 @@
 
 面向餐饮商家的外卖点餐系统，包含 **管理端**（员工、分类、菜品、套餐、订单、报表）与 **用户端**（浏览、购物车、地址、下单、支付回调、催单）两条业务链路。
 
-在课程版基础上做了工程化改造：用户端认证闭环、下单幂等、菜品/套餐双库存与库存流水回补、超时订单延迟队列、手写缓存层、订单状态机与并发条件更新，并配套可复跑的验证脚本（`docs/verify/`）与验证记录（`docs/verification.md`）。
+在课程版基础上做了工程化改造：用户端认证闭环、下单幂等、菜品/套餐双库存与库存流水回补、超时订单延迟队列、手写缓存层、订单状态机与并发条件更新，并按业务边界把 AI 网关拆成独立服务（Nacos 注册发现 + OpenFeign）。配套可复跑的验证脚本（`docs/verify/`）与验证记录（`docs/verification.md`）。
 
 ---
 
@@ -14,6 +14,7 @@
 | 存储 | MySQL 8.0、Redis（缓存 + 幂等键） |
 | 认证 | JWT（jjwt 0.9.1），管理端/用户端密钥隔离 |
 | 通信 | WebSocket（来单提醒、催单） |
+| 微服务 | Spring Cloud 2021.0.4 + Spring Cloud Alibaba 2021.0.4.0、Nacos 2.3.2、OpenFeign |
 | 文档 | Knife4j / Swagger2 |
 | 其他 | Druid、Lombok、fastjson、Apache POI、阿里云 OSS、微信支付 SDK |
 
@@ -23,10 +24,10 @@
 flowchart LR
     subgraph Client["客户端"]
         A1["管理端 Admin Vue"]
-        A2["用户端 小程序 / Postman"]
+        A2["用户端 小程序 / H5"]
     end
 
-    subgraph Server["sky-server"]
+    subgraph Server["sky-server :8080"]
         B1["JwtTokenAdminInterceptor /admin/**"]
         B2["JwtTokenUserInterceptor /user/**"]
         C["Controller<br/>admin · user · notify"]
@@ -34,10 +35,18 @@ flowchart LR
         E["Mapper<br/>MyBatis + XML"]
         F["WebSocketServer<br/>来单提醒 / 催单"]
         G["OrderTask<br/>超时订单 / 派送完成"]
+        N["AiRemoteClient<br/>OpenFeign + fallback"]
     end
 
-    H[("MySQL 8.0<br/>11 张业务表 + stock_log")]
-    I[("Redis<br/>缓存 / 幂等键 / 营业状态")]
+    subgraph Ai["sky-ai-server :8081"]
+        O["AiInternalController<br/>/ai/**"]
+        P["AiRecommendService<br/>CommentSummaryService"]
+        Q["LlmClient · IntentValidator<br/>AiRateLimiter · ai_call_log"]
+    end
+
+    R[("Nacos 2.3.2<br/>注册发现")]
+    H[("MySQL 8.0<br/>业务表 + stock_log + ai_call_log")]
+    I[("Redis<br/>缓存 / 幂等键 / 熔断开关")]
     J["阿里云 OSS"]
     K["微信支付"]
 
@@ -49,6 +58,13 @@ flowchart LR
     C --> K
     D --> F
     G --> H
+
+    C -->|"同步推荐"| N
+    N -.-> R
+    N -->|"HTTP"| O
+    O --> P --> Q
+    P --> H
+    P --> I
 ```
 
 ## 模块
@@ -57,14 +73,15 @@ flowchart LR
 sky-take-out
 ├── sky-common     常量、异常、工具类、JWT、OSS、微信支付
 ├── sky-pojo       entity / dto / vo
-└── sky-server     启动类、controller、service、mapper、task、websocket、config
+├── sky-ai-server  AI 独立服务：推荐、打标、周报建议、ai_call_log
+└── sky-server     主服务：启动类、controller、service、mapper、task、websocket、config
 ```
 
 ## 快速开始
 
 ### 1. 本地运行
 
-前置：JDK 8+（本机验证用 JDK 21）、Maven 3.8+、MySQL 8.0、Redis 6+。
+前置：JDK 8+（本机验证用 JDK 21）、Maven 3.8+、MySQL 8.0、Redis 6+、Nacos 2.3.2（单机）。
 
 ```bash
 # 1）初始化数据库
@@ -76,12 +93,29 @@ mysql -uroot -p123456 sky_take_out < docs/sql/V2_stock.sql
 # 2）启动 Redis（示例）
 redis-server
 
-# 3）启动应用
+# 3）启动 Nacos 单机（下载 nacos-server-2.3.2.zip 并解压）
+#    https://download.nacos.io/nacos-server/nacos-server-2.3.2.zip
+#    Windows: nacos\bin\startup.cmd -m standalone
+#    Linux/macOS: nacos/bin/startup.sh -m standalone
+#    控制台 http://127.0.0.1:8848/nacos
+
+# 4）构建（sky-ai-server + sky-server）
 mvn -DskipTests package
+
+# 5）启动 AI 服务（8081），必须在当前会话显式设置 Key
+#    Windows PowerShell: $env:DEEPSEEK_API_KEY='sk-...'
+#    Linux/macOS:        export DEEPSEEK_API_KEY='sk-...'
+java -jar sky-ai-server/target/sky-ai-server-1.0-SNAPSHOT.jar
+
+# 6）启动主服务（8080）
 java -jar sky-server/target/sky-server-1.0-SNAPSHOT.jar
 ```
 
-默认端口 `8080`，数据库/Redis 连接见 `sky-server/src/main/resources/application-dev.yml`。
+默认端口：主服务 `8080`、AI 服务 `8081`、Nacos `8848`。数据库/Redis/Nacos 地址见
+`sky-server/src/main/resources/application-dev.yml` 与 `sky-ai-server/src/main/resources/application.yml`。
+
+> 没起 Nacos 时，主服务仍可用（`NACOS_DISCOVERY_ENABLED=false`），但 AI 接口会走本地热销降级；
+> 要看完整 Feign 链路，必须同时启动 Nacos 与 `sky-ai-server`。
 
 ### 2. Docker Compose
 
@@ -92,6 +126,10 @@ docker compose logs -f app
 ```
 
 首次启动会自动执行 `docs/sql/` 下的建表与增量脚本。
+
+> compose 目前只编排 MySQL + Redis + 主服务，并通过 `NACOS_DISCOVERY_ENABLED=false` 关闭注册发现；
+> 此时 AI 接口走本地降级，不影响点餐主链路。要跑完整 Nacos + Feign 链路，按「本地运行」启动
+> Nacos 与 `sky-ai-server`（Dockerfile 已同时构建两个 jar，可用 `--entrypoint` 覆盖启动 AI 服务）。
 
 ## 接口文档
 
@@ -159,6 +197,9 @@ docker compose logs -f app
 ## AI 点餐助手（T10 / T11）
 
 面向门店的"扫码点餐"助手：用户用一句话描述需求，返回 3~5 道菜的推荐与理由。**AI 只推荐，不写购物车、不自动下单**，加购由用户点击触发。
+
+> T14 起推荐/打标/周报建议运行在独立服务 `sky-ai-server:8081`，主服务通过 Nacos + OpenFeign 调用；
+> H5 使用的 SSE 接口仍留在主服务，原因见「微服务拆分（T14）」。
 
 ### 接口
 
@@ -282,9 +323,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File docs/verify/t05-verify.ps1  
 powershell -NoProfile -ExecutionPolicy Bypass -File docs/verify/t06-verify.ps1   # 缓存
 powershell -NoProfile -ExecutionPolicy Bypass -File docs/verify/t07-verify.ps1   # 报表
 powershell -NoProfile -ExecutionPolicy Bypass -File docs/verify/t09-verify.ps1   # 状态机并发
-# 单元测试 / 集成测试
-mvn test -Dtest=OrderStatusTransferTest,CacheClientTest
+# 单元测试 / 集成测试（6 个）
+mvn test
 ```
+
+T14 的微服务验证需要先启动 Nacos、`sky-ai-server` 与主服务，命令与输出见
+[docs/verification.md](docs/verification.md) 的「T14 微服务拆分」。
 
 关键结果：
 
@@ -330,6 +374,69 @@ powershell -File docs/verify/seed-t12.ps1 -Clean           # 清理 T12 前缀�
 1. 做**品类级预测**（荤菜/汤/主食），样本量放大 5~10 倍
 2. 数据密度提到 3000 单以上，单菜品日均 10+
 3. 不要上深度模型——这个数据量只会过拟合
+
+## 微服务拆分（T14）
+
+目标不是"上微服务架构"，而是把 AI 网关按业务边界拆成一个独立服务，验证注册发现、远程调用与降级链路。
+
+### 边界
+
+| 模块 | 职责 |
+|---|---|
+| `sky-server :8080` | JWT、订单/库存/报表等业务、SSE 长连接、`AiRemoteClient`（Feign）与本地 fallback |
+| `sky-ai-server :8081` | 推荐、菜品打标、评价周报建议、`LlmClient`、限流、`ai_call_log` |
+
+只拆了一个服务，所以文档和简历写「按业务边界拆分出独立服务」，不写「微服务架构」——否则会被追问服务治理、链路追踪、分布式事务。
+
+### 版本对齐
+
+Spring Boot 2.7.3 不能直接套 Spring Cloud 2022+，这里用：
+
+| 组件 | 版本 |
+|---|---|
+| Spring Cloud | 2021.0.4 |
+| Spring Cloud Alibaba | 2021.0.4.0 |
+| Nacos Server | 2.3.2（standalone） |
+| Nacos Client | 2.0.4（SCA 传递） |
+
+Nacos Client 2.0.4 与 Server 2.3.2 实测注册/发现正常，未额外升级客户端。
+
+### 内部接口
+
+| 接口 | 调用方 | 说明 |
+|---|---|---|
+| `POST /ai/recommendSync` | 主服务 `/user/ai/recommendSync`、`/user/ai/recommend` | 同步推荐，请求头带 `X-User-Id` |
+| `POST /ai/tag/refresh` | 主服务 `/admin/ai/tag/refresh` | 菜品打标 |
+| `POST /ai/comment/summary` | 主服务 `CommentServiceImpl` | 评价周报建议（模型调用统一收口到 AI 服务） |
+| `GET /ai/status` | 主服务 `/user/ai/status` | 模型、熔断、今日调用与 token |
+| `GET /ai/ping` | 运维/验证脚本 | 健康检查 |
+
+### 三个必须讲清的技术点
+
+**1. SSE 不能走 Feign。** Feign 是同步阻塞客户端，不支持流式返回；`/user/ai/recommend` 的 `SseEmitter` 留在主服务，主服务在独立线程里调用 Feign 同步接口，再把结果拆成 `parsed` / `item` / `done` 事件推给浏览器。拆的只是同步接口，不是流式接口。
+
+**2. 用户身份透传。** 主服务 JWT 拦截器已经把 `userId` 放进 `BaseContext`，调 Feign 时写入 `X-User-Id`；AI 服务的 `AiUserContextInterceptor` 解析并放进 `AiUserContext`，限流键是 `ai:rate:{userId}:{hour}`。直接调 AI 服务不带 header 会返回 `code=0, msg=缺少用户身份`，不会因为 `userId=null` 触发限流 NPE。
+
+**3. 降级不引入 Sentinel。** 复用已有的 Redis 开关 `ai:circuit:open`：
+- AI 服务不可用 → Feign fallback 在主服务本地查热销菜，返回 `mode=DEGRADED`，HTTP 仍是 200；
+- fallback 同时写 `ai:circuit:open`（TTL 15s），后续请求在主服务直接快速失败，不再等 Feign 超时；
+- TTL 到期自动放行探测，AI 服务恢复后自动回到 `mode=AI`；
+- Feign fallback 需要 circuit breaker 运行时，这里用 Resilience4j（不是 Sentinel），并把 TimeLimiter 从默认 1s 调到 10s，否则 1s 以上的真实模型调用会被误判超时。
+
+### 验证结果
+
+| 场景 | 结果 |
+|---|---|
+| Nacos 注册 | `sky-server 127.0.0.1:8080`、`sky-ai-server 127.0.0.1:8081`，healthy |
+| 主服务 → Feign → AI 同步推荐 | `mode=AI`，5 条推荐，端到端 1.37s；`ai_call_log` 记录 196/39 token |
+| SSE | `parsed` / 5×`item` / `done` 事件完整，1.08s |
+| 身份透传 | 带 `X-User-Id: 99` 生成 `ai:rate:99:...`；不带 header 返回“缺少用户身份” |
+| 停 AI 服务 | HTTP 200，`mode=DEGRADED`，5 条本地热销，166ms；第二次走熔断 15ms |
+| 恢复 AI 服务 | 重新注册后 `mode=AI`，2.05s，token 正常入库 |
+| 回归 | 打标 80 条、周报建议 115 字、6 个单测全绿 |
+
+完整命令与输出见 [docs/verification.md](docs/verification.md) 的 T14。
+
 ## Roadmap
 
 - [x] T01 用户端微信登录 + JWT 拦截器（双端隔离）
@@ -348,6 +455,8 @@ powershell -File docs/verify/seed-t12.ps1 -Clean           # 清理 T12 前缀�
 - [x] T12.5 商家经营看板 H5（流动背景 / 动态柱状 / 趋势曲线）
 - [x] T12.6 种子脚本（7/30 天可选、可清理、可复现）与看板任意时间段查询
 - [x] T13 菜品销量预测（MA7×星期系数，holdout MAPE，附小样本结论）
+- [x] T14 按业务边界拆出 sky-ai-server（Nacos 注册发现 + OpenFeign + fallback）
+- [ ] T15 RabbitMQ 异步化（评价分析削峰 / 订单超时延迟消息，二选一）
 - [ ] 语音智能体（讯飞 ASR/TTS 流式接入，放 Roadmap）
 
 > T07 说明：报表模板行数固定 30 行，未引入 SXSSF 流式导出；真实瓶颈是「按天循环查库」，
@@ -360,3 +469,5 @@ powershell -File docs/verify/seed-t12.ps1 -Clean           # 清理 T12 前缀�
 - AI 推荐理由默认用模板（关闭了第二次模型调用以换取延迟），需要时可以开 `sky.ai.reason-enabled`
 - 语音输入依赖浏览器 Web Speech API，仅 Chrome/Edge 支持；讯飞接入放在 Roadmap
 - 启动应用时需显式传入 `DEEPSEEK_API_KEY`（`Start-Process` 启动的进程不继承用户环境变量）
+- Feign fallback 的 Resilience4j TimeLimiter 默认 1s，模型调用超过 1s 会被误判超时；已调到 10s
+- 本地双服务需同时启动 Nacos 2.3.2 与 `sky-ai-server`；Docker Compose 暂未编排这两个组件，AI 接口会降级

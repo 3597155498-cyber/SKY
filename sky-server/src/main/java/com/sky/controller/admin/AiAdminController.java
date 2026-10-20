@@ -1,7 +1,7 @@
 package com.sky.controller.admin;
 
 import com.sky.result.Result;
-import com.sky.service.AiRecommendService;
+import com.sky.service.AiGatewayService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AiAdminController {
 
     @Autowired
-    private AiRecommendService aiRecommendService;
+    private AiGatewayService aiGatewayService;
 
     /**
      * 刷新菜品标签（离线批处理，可重跑；同一菜品会先清空再写）
@@ -28,7 +28,7 @@ public class AiAdminController {
     @PostMapping("/tag/refresh")
     @ApiOperation("刷新菜品标签")
     public Result<Integer> refreshTags() {
-        int count = aiRecommendService.refreshDishTags();
+        int count = aiGatewayService.refreshDishTags();
         log.info("菜品标签刷新完成, 写入 {} 条", count);
         return Result.success(count);
     }

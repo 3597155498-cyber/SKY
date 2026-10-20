@@ -2,10 +2,17 @@ server:
   port: 8080
 
 spring:
+  application:
+    name: sky-server
   profiles:
     active: dev
   main:
     allow-circular-references: true
+  cloud:
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:true}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
   datasource:
     druid:
       driver-class-name: ${sky.datasource.driver-class-name}
@@ -23,6 +30,32 @@ spring:
     port: ${sky.redis.port}
     password: ${sky.redis.password}
     database: ${sky.redis.database}
+
+feign:
+  circuitbreaker:
+    # feign fallback 需要 circuit breaker 运行时；这里用 Resilience4j，不引入 Sentinel
+    enabled: true
+  client:
+    config:
+      default:
+        connect-timeout: 1000
+        read-timeout: 8000
+
+resilience4j:
+  timelimiter:
+    configs:
+      default:
+        # 默认 1s 会把模型调用（约 1~4s）误判为超时，必须大于 Feign 读超时
+        timeout-duration: 10s
+        cancel-running-future: true
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
 
 mybatis:
   #mapper配置文件
@@ -51,19 +84,6 @@ sky:
     user-ttl: 7200000
     user-token-name: authentication
   ai:
-    base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
-    api-key: ${DEEPSEEK_API_KEY:}
-    model: ${DEEPSEEK_MODEL:deepseek-chat}
-    mock: ${AI_MOCK:false}
-    timeout-ms: 4000
-    rate-limit-per-hour: 10
-    cache-ttl-minutes: 10
+    # 主服务只保留本地降级所需参数；模型/限流/人格配置已随服务迁到 sky-ai-server
     max-items: 5
-    # 是否额外调用一次模型生成推荐理由（关闭则用模板理由，少一次调用、延迟减半）
-    reason-enabled: false
-    persona:
-      mascot-name: 小天
-      style: 热情、简洁、偶尔卖萌
-      greeting: 想吃点什么？直接告诉我想吃辣还是清淡、几个人、预算多少～
-      not-understood: 我没太听清，先给你几个本店热销的，你也可以直接说口味或预算～
-      degraded: 网络有点慢，我先按热销给你推荐～
+    circuit-ttl-seconds: 15

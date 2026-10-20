@@ -1,9 +1,14 @@
-package com.sky.service.impl;
+package com.sky.ai.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sky.ai.client.LlmClient;
 import com.sky.ai.guard.AiRateLimiter;
+import com.sky.ai.mapper.AiCallLogMapper;
+import com.sky.ai.mapper.AiDishMapper;
+import com.sky.ai.mapper.AiOrderMapper;
+import com.sky.ai.mapper.DishTagMapper;
+import com.sky.ai.service.AiRecommendService;
 import com.sky.ai.validate.IntentValidator;
 import com.sky.constant.AiConstant;
 import com.sky.constant.StatusConstant;
@@ -12,11 +17,6 @@ import com.sky.dto.GoodsSalesDTO;
 import com.sky.entity.AiCallLog;
 import com.sky.entity.Dish;
 import com.sky.entity.DishTag;
-import com.sky.mapper.AiCallLogMapper;
-import com.sky.mapper.DishMapper;
-import com.sky.mapper.DishTagMapper;
-import com.sky.mapper.OrderMapper;
-import com.sky.service.AiRecommendService;
 import com.sky.vo.AiIntent;
 import com.sky.vo.AiItemVO;
 import com.sky.vo.AiRecommendVO;
@@ -40,7 +40,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 自然语言点餐：意图解析 → 校验 → 检索打分 → 理由生成 → 人格化话术
@@ -70,11 +69,11 @@ public class AiRecommendServiceImpl implements AiRecommendService {
     @Autowired
     private AiRateLimiter aiRateLimiter;
     @Autowired
-    private DishMapper dishMapper;
+    private AiDishMapper dishMapper;
     @Autowired
     private DishTagMapper dishTagMapper;
     @Autowired
-    private OrderMapper orderMapper;
+    private AiOrderMapper orderMapper;
     @Autowired
     private AiCallLogMapper aiCallLogMapper;
     @Autowired

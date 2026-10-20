@@ -3,7 +3,7 @@ package com.sky.controller.user;
 import com.sky.context.BaseContext;
 import com.sky.dto.AiRecommendDTO;
 import com.sky.result.Result;
-import com.sky.service.AiRecommendService;
+import com.sky.service.AiGatewayService;
 import com.sky.vo.AiRecommendVO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 public class AiController {
 
     @Autowired
-    private AiRecommendService aiRecommendService;
+    private AiGatewayService aiGatewayService;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
@@ -43,7 +43,7 @@ public class AiController {
     public Result<AiRecommendVO> recommendSync(@RequestBody AiRecommendDTO dto) {
         Long userId = BaseContext.getCurrentId();
         log.info("AI 推荐请求, userId={}, query={}", userId, dto == null ? null : dto.getQuery());
-        return Result.success(aiRecommendService.recommend(dto, userId));
+        return Result.success(aiGatewayService.recommend(dto, userId));
     }
 
     /**
@@ -57,7 +57,7 @@ public class AiController {
         SseEmitter emitter = new SseEmitter(30000L);
         executor.execute(() -> {
             try {
-                AiRecommendVO vo = aiRecommendService.recommend(dto, userId);
+                AiRecommendVO vo = aiGatewayService.recommend(dto, userId);
                 emitter.send(SseEmitter.event().name("parsed").data(vo.getParsed() == null ? "{}" : vo.getParsed()));
                 if (vo.getItems() != null) {
                     for (Object item : vo.getItems()) {
@@ -80,6 +80,6 @@ public class AiController {
     @GetMapping("/status")
     @ApiOperation("AI 状态与今日成本")
     public Result<Map<String, Object>> status() {
-        return Result.success(aiRecommendService.status());
+        return Result.success(aiGatewayService.status());
     }
 }

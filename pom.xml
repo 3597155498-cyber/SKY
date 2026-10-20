@@ -15,9 +15,13 @@
     <modules>
         <module>sky-common</module>
         <module>sky-pojo</module>
+        <module>sky-ai-server</module>
         <module>sky-server</module>
     </modules>
     <properties>
+        <!-- Spring Cloud 2021.0.4 + Spring Cloud Alibaba 2021.0.4.0：与 Boot 2.7.x 对齐 -->
+        <spring.cloud.version>2021.0.4</spring.cloud.version>
+        <spring.cloud.alibaba.version>2021.0.4.0</spring.cloud.alibaba.version>
         <mybatis.spring>2.2.0</mybatis.spring>
         <lombok>1.18.30</lombok>
         <fastjson>1.2.76</fastjson>
@@ -33,6 +37,22 @@
     </properties>
     <dependencyManagement>
         <dependencies>
+            <!-- 先导入 Spring Cloud BOM，再导入 SCA BOM（SCA 覆盖自身组件版本） -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring.cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring.cloud.alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <dependency>
                 <groupId>org.mybatis.spring.boot</groupId>
                 <artifactId>mybatis-spring-boot-starter</artifactId>

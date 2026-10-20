@@ -46,6 +46,8 @@ services:
       REDIS_HOST: redis
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
       WECHAT_MOCK: "true"
+      # compose 未内置 Nacos/AI 服务：关闭注册发现，AI 接口走本地降级，单体链路仍可用
+      NACOS_DISCOVERY_ENABLED: "false"
     ports:
       - "8080:8080"
 

@@ -1,0 +1,6 @@
+spring:
+  cloud:
+    nacos:
+      discovery:
+        # 本机双服务联调：显式注册 127.0.0.1，避免多网卡时 Feign 拿到不可达的虚拟网卡地址
+        ip: 127.0.0.1

@@ -1,6 +1,6 @@
 # 验证记录
 
-> 每条记录对应一张改造任务卡，命令可复跑。环境：Windows 10/11 + JDK 21 + Maven 3.9.16 + MySQL 8.0.43 + Redis（本机 6379/db1）。
+> 每条记录对应一张改造任务卡，命令可复跑。环境：Windows 10/11 + JDK 21 + Maven 3.9.16 + MySQL 8.0.43 + Redis（本机 6379/db1）+ Nacos 2.3.2（T14 起）。
 
 ## 环境自检（P4）
 
@@ -152,9 +152,10 @@ PASS  V3 orders/dish/user 索引存在
 ## T08 测试
 
 ```
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0   BUILD SUCCESS
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0   BUILD SUCCESS
 - OrderStatusTransferTest：合法/非法状态流转（纯单元测试）
 - CacheClientTest：缓存命中后回源只执行一次（@SpringBootTest RANDOM_PORT）
+- HttpClientTest / SpringDateRedisTest：随机端口启动、HTTP 与 Redis 连通性
 ```
 
 注意：`@SpringBootTest` 默认 MOCK 环境会因 `ServerEndpointExporter` 报 `ServerContainer not available`，需用 `webEnvironment = RANDOM_PORT`。
@@ -290,3 +291,211 @@ summary: 配送问题最突出（110条，占差评40%），分量不足和包�
 - 600 条评价分析：**0 次模型调用**
 - 洞察周报：**1 次调用 / 207 token**，按时间范围缓存 10 分钟
 - 结论：把"最贵的工具"只用在"把数字讲成人话"这一步，其余全部规则化
+
+---
+
+## T14 微服务拆分（Nacos + OpenFeign）
+
+目标：把 AI 网关拆成独立服务 `sky-ai-server`，用 Nacos 注册发现、OpenFeign 调用，并验证停服降级与恢复。
+只拆一个 AI 服务，不声称"微服务架构"。
+
+### 版本与环境
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| Spring Boot | 2.7.3 | 现有底座，`javax` |
+| Spring Cloud | 2021.0.4 | 与 Boot 2.7.x 对齐 |
+| Spring Cloud Alibaba | 2021.0.4.0 | 传递 Nacos Client 2.0.4 |
+| Nacos Server | 2.3.2 standalone | 本机 `127.0.0.1:8848` |
+| Resilience4j | 2.1.4 | 仅作为 Feign fallback 运行时，**未引入 Sentinel** |
+
+Nacos 启动（Windows）：
+
+```powershell
+cd C:\IDEA\.tools\nacos\nacos\bin
+.\startup.cmd -m standalone
+# 就绪检查
+curl.exe http://127.0.0.1:8848/nacos/v1/console/health/readiness
+# -> OK
+```
+
+### 启动两个服务
+
+```powershell
+# AI 服务 8081（必须显式设置 Key；Start-Process 不继承用户级环境变量）
+$env:DEEPSEEK_API_KEY=[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User')
+Start-Process java -ArgumentList '-jar','sky-ai-server\target\sky-ai-server-1.0-SNAPSHOT.jar' `
+  -WorkingDirectory 'C:\IDEA\sky-take-out' -WindowStyle Hidden
+
+# 主服务 8080
+Start-Process java -ArgumentList '-jar','sky-server\target\sky-server-1.0-SNAPSHOT.jar' `
+  -WorkingDirectory 'C:\IDEA\sky-take-out' -WindowStyle Hidden
+```
+
+### V1 注册发现
+
+```powershell
+curl.exe "http://127.0.0.1:8848/nacos/v1/ns/instance/list?serviceName=sky-ai-server"
+curl.exe "http://127.0.0.1:8848/nacos/v1/ns/instance/list?serviceName=sky-server"
+```
+
+结果：
+
+```
+sky-ai-server  hosts=1  127.0.0.1:8081  healthy=true  ephemeral=true
+sky-server     hosts=1  127.0.0.1:8080  healthy=true  ephemeral=true
+metadata.preserved.register.source=SPRING_CLOUD
+```
+
+结论：两个服务都以 `dev` 环境注册到 `DEFAULT_GROUP`，Nacos Client 2.0.4 与 Server 2.3.2 兼容。
+
+### V2 主服务 → Feign → AI 同步推荐
+
+```powershell
+# 1）登录拿用户 token
+curl.exe -sS -X POST -H "Content-Type: application/json; charset=utf-8" `
+  --data-binary "@login.json" http://127.0.0.1:8080/user/user/login
+# login.json: {"code":"test_code_001"}  -> userId=11, token 105 字节
+
+# 2）调用主服务同步推荐（body 必须用 UTF-8 文件，避免 PowerShell 5.1 编码问题）
+curl.exe -sS -X POST -H "authentication: <token>" `
+  -H "Content-Type: application/json; charset=utf-8" `
+  --data-binary "@q.json" `
+  http://127.0.0.1:8080/user/ai/recommendSync
+```
+
+关键结果：
+
+```
+HTTP 200
+code=1  mode=AI  degraded=false  items=5  elapsedMs=1366
+parsed={"spicy":0,"flavors":["清淡"],"budgetPerPerson":80,"people":2}
+items[0]={"dishId":47,"name":"北冰洋","price":4.00,"score":8}
+ai_call_log: id=848 biz=RECOMMEND_PARSE model=deepseek-flash
+             prompt_tokens=196 completion_tokens=39 cost_ms=1123
+```
+
+结论：主服务没有本地 AI 实现，`AiRemoteClient` 通过 Nacos 解析到 `sky-ai-server`，AI 服务完成模型调用、
+检索与 `ai_call_log` 落库。
+
+### V3 SSE 仍留在主服务
+
+```powershell
+curl.exe -sS -N --max-time 40 -X POST -H "authentication: <token>" `
+  -H "Accept: text/event-stream" --data-binary "@q-sse.json" `
+  http://127.0.0.1:8080/user/ai/recommend
+```
+
+结果：
+
+```
+event:parsed  data={"spicy":2,"people":3,"budgetPerPerson":33,...}
+event:item    data={"dishId":47,...}      ×5
+event:done    data={"mode":"AI","items":[...],"elapsedMs":1082}
+```
+
+结论：`SseEmitter` 和事件拆分逻辑留在主服务；主服务在固定线程池里调用 Feign 同步接口，再把结果转成事件。
+Feign 是同步阻塞客户端，不支持流式返回，所以**没有**把 SSE 拆到 AI 服务。
+
+### V4 用户身份透传
+
+```powershell
+# 带 X-User-Id 直连 AI 服务
+curl.exe -X POST -H "X-User-Id: 99" -H "Content-Type: application/json" `
+  --data-binary "@q.json" http://127.0.0.1:8081/ai/recommendSync
+# -> code=1, mode=AI, items=5
+
+# 不带 header
+curl.exe -X POST -H "Content-Type: application/json" `
+  --data-binary "@q.json" http://127.0.0.1:8081/ai/recommendSync
+# -> {"code":0,"msg":"缺少用户身份"}
+```
+
+Redis 限流键：
+
+```
+ai:rate:99:2026102022 = 1
+```
+
+结论：主服务把 `BaseContext` 里的 `userId` 写入 `X-User-Id`，AI 服务拦截器解析到
+`AiUserContext`，限流按用户计数；缺失身份时明确拒绝，不会出现 `userId=null` 的限流 NPE。
+
+### V5 停掉 AI 服务 → 主服务降级而非 500
+
+```powershell
+$c = Get-NetTCPConnection -State Listen -LocalPort 8081
+Stop-Process -Id $c.OwningProcess -Force
+
+# 立即调用主服务（新 query，避免命中推荐缓存）
+curl.exe -sS -o degrade1.json -w "%{http_code}" -X POST `
+  -H "authentication: <token>" -H "Content-Type: application/json" `
+  --data-binary "@q-degrade.json" `
+  http://127.0.0.1:8080/user/ai/recommendSync
+```
+
+结果：
+
+```
+HTTP 200
+code=1  mode=DEGRADED  degraded=true  needConfirm=true  items=5  elapsedMs=166
+speech=AI 服务暂时不可用，先给你几个本店热销的～
+items[0]={"dishId":47,"name":"北冰洋","reason":"本店热销"}
+items[1]={"dishId":59,"name":"东坡肘子",...}
+redis: EXISTS ai:circuit:open -> 1, TTL -> 15
+
+# 第二次调用：主服务直接看熔断 key，不再等 Feign
+HTTP 200  mode=DEGRADED  elapsedMs=15  （墙钟 48ms）
+```
+
+结论：Feign fallback 在主服务本地查热销菜，接口仍返回 200；同时写 Redis 熔断开关，15s 内快速失败。
+停服后 Nacos 实例列表由 1 变 0。
+
+### V6 恢复 AI 服务 → 自动恢复
+
+```powershell
+$env:DEEPSEEK_API_KEY=[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User')
+Start-Process java -ArgumentList '-jar','sky-ai-server\target\sky-ai-server-1.0-SNAPSHOT.jar' `
+  -WorkingDirectory 'C:\IDEA\sky-take-out' -WindowStyle Hidden
+
+# 等 /ai/ping 与 Nacos 实例恢复，等 ai:circuit:open TTL 到期（约 15s）
+curl.exe "http://127.0.0.1:8848/nacos/v1/ns/instance/list?serviceName=sky-ai-server"
+# -> hosts=1 healthy=true
+
+# 再调主服务（新 query）
+```
+
+结果：
+
+```
+HTTP 200  code=1  mode=AI  degraded=false  items=5  elapsedMs=2050
+ai_call_log: id=850 prompt_tokens=195 completion_tokens=39 cost_ms=1249
+```
+
+结论：无需重启主服务，熔断 key TTL 到期后自动放行探测，AI 服务恢复后业务回到 `mode=AI`。
+
+### V7 拆分后的回归
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 管理端打标 | `POST /admin/ai/tag/refresh`（token 头） | `code=1, data=80`，2.95s；`ai_call_log` id=851 `DISH_TAG` 618/643 token |
+| 商家洞察周报 | `POST /admin/comment/insight/refresh` → `GET /admin/comment/insight?begin=2026-10-14&end=2026-10-20` | 159 条评价 / 84 差评，周报 115 字，1.31s；`ai_call_log` id=852 `COMMENT_SUMMARY` 150/86 token |
+| AI 状态 | `GET /user/ai/status` | 15ms 返回 `model/today/rateLimitPerHour`，数据来自 AI 服务 |
+| 单测 | `mvn -B test` | `Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS |
+
+> 周报建议原本在 `CommentServiceImpl` 里直接调 `LlmClient`。拆分后主服务只传统计结果，
+> AI 服务统一负责模型调用与 `ai_call_log` 落库，主服务不再依赖 `LlmClient`/`AiCallLogMapper`。
+
+### 踩坑记录
+
+1. **Resilience4j TimeLimiter 默认 1s**：第一次 Feign 调用真实模型耗时 1.06s，被 TimeLimiter 判超时，
+   直接走 fallback。日志：`TimeLimiter 'AiRemoteClient#recommendSync(...)' recorded a timeout exception`。
+   修复：`resilience4j.timelimiter.configs.default.timeout-duration: 10s`，必须大于 Feign 读超时 8s。
+2. **Feign fallback 需要 circuit breaker 运行时**：只加 `fallbackFactory` 不生效；设置
+   `feign.circuitbreaker.enabled=true` 并引入 `spring-cloud-starter-circuitbreaker-resilience4j`。
+   没有引入 Sentinel。
+3. **Nacos 版本**：Spring Cloud Alibaba 2021.0.4.0 传递 Nacos Client 2.0.4，配 Nacos Server 2.3.2
+   实测正常；不要混用 Spring Cloud 2022+（Boot 3 / Jakarta）。
+4. **PowerShell 5.1 中文**：`Invoke-RestMethod` 响应按 ANSI 解码，中文变乱码；验证时统一用
+   `curl.exe --data-binary @file` 发 UTF-8，落盘后用 UTF-8 读取。
+5. **AI 服务直连安全**：`/ai/recommendSync` 强制要求 `X-User-Id`，避免绕过主服务 JWT 直接刷模型额度；
+   `/ai/tag/refresh`、`/ai/status` 只允许内网访问（未暴露到公网）。

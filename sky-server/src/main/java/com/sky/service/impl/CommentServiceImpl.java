@@ -3,17 +3,15 @@ package com.sky.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.pagehelper.Page;
 import com.github.pagehelper.PageHelper;
-import com.sky.ai.client.LlmClient;
-import com.sky.entity.AiCallLog;
 import com.sky.entity.Comment;
 import com.sky.entity.CommentAnalysis;
 import com.sky.entity.Orders;
 import com.sky.exception.BaseException;
-import com.sky.mapper.AiCallLogMapper;
 import com.sky.mapper.CommentAnalysisMapper;
 import com.sky.mapper.CommentMapper;
 import com.sky.mapper.OrderMapper;
 import com.sky.result.PageResult;
+import com.sky.service.AiGatewayService;
 import com.sky.service.CommentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,11 +66,9 @@ public class CommentServiceImpl implements CommentService {
     @Autowired
     private OrderMapper orderMapper;
     @Autowired
-    private LlmClient llmClient;
-    @Autowired
-    private AiCallLogMapper aiCallLogMapper;
-    @Autowired
     private StringRedisTemplate stringRedisTemplate;
+    @Autowired
+    private AiGatewayService aiGatewayService;
 
     @Autowired
     private com.sky.cache.CacheClient cacheClient;
@@ -300,24 +296,11 @@ public class CommentServiceImpl implements CommentService {
             return template;
         }
         try {
-            StringBuilder payload = new StringBuilder("{\"totalComments\":").append(total)
-                    .append(",\"negativeCount\":").append(negative)
-                    .append(",\"topNegativeThemes\":[");
-            for (int i = 0; i < topThemes.size(); i++) {
-                if (i > 0) {
-                    payload.append(',');
-                }
-                payload.append("{\"theme\":\"").append(topThemes.get(i).get("theme"))
-                        .append("\",\"count\":").append(topThemes.get(i).get("count")).append('}');
-            }
-            payload.append("]}");
-            LlmClient.LlmResult result = llmClient.chat(
-                    "你是餐饮运营顾问。只输出JSON：{\"summary\":\"120字以内，指出最突出的问题并给1-2条可执行建议，不要空话\"}",
-                    payload.toString(), true, "{\"summary\":\"\"}");
-            logCall(result);
-            String content = result.getContent();
-            com.fasterxml.jackson.databind.JsonNode node = objectMapper.readTree(content);
-            String summary = node.path("summary").asText();
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("totalComments", total);
+            payload.put("negativeCount", negative);
+            payload.put("topNegativeThemes", topThemes);
+            String summary = aiGatewayService.commentSummary(payload);
             return StringUtils.hasText(summary) ? summary : template;
         } catch (Exception e) {
             log.warn("周报建议生成失败, 使用模板: {}", e.getMessage());
@@ -338,21 +321,4 @@ public class CommentServiceImpl implements CommentService {
         return sb.toString();
     }
 
-    private void logCall(LlmClient.LlmResult result) {
-        try {
-            aiCallLogMapper.insert(AiCallLog.builder()
-                    .bizType("COMMENT_SUMMARY")
-                    .model(result.getModel())
-                    .promptTokens(result.getPromptTokens())
-                    .completionTokens(result.getCompletionTokens())
-                    .costMs((int) result.getElapsedMs())
-                    .degraded(0)
-                    .success(1)
-                    .traceId(String.valueOf(System.currentTimeMillis()))
-                    .createTime(LocalDateTime.now())
-                    .build());
-        } catch (Exception e) {
-            log.warn("调用日志写入失败: {}", e.getMessage());
-        }
-    }
 }
