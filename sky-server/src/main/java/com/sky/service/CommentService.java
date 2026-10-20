@@ -29,4 +29,11 @@ public interface CommentService {
      * 管理端评价分页
      */
     PageResult page(int page, int pageSize, Integer score);
+
+    /**
+     * 主动失效洞察缓存（数据导入/重算后必须调用，否则会读到旧结果）
+     *
+     * @return 删除的 key 数量
+     */
+    long clearInsightCache();
 }

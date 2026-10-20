@@ -51,4 +51,13 @@ public class CommentAdminController {
             @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate end) {
         return Result.success(commentService.insight(begin, end));
     }
+
+    /**
+     * 主动失效洞察缓存：导入评价、重算分析后必须调用
+     */
+    @PostMapping("/insight/refresh")
+    @ApiOperation("刷新洞察缓存")
+    public Result<Long> refreshInsight() {
+        return Result.success(commentService.clearInsightCache());
+    }
 }

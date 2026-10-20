@@ -74,6 +74,9 @@ public class CommentServiceImpl implements CommentService {
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
+    @Autowired
+    private com.sky.cache.CacheClient cacheClient;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
@@ -215,6 +218,13 @@ public class CommentServiceImpl implements CommentService {
         PageHelper.startPage(page, pageSize);
         Page<Comment> result = commentMapper.pageQuery(score, null, null);
         return new PageResult(result.getTotal(), result.getResult());
+    }
+
+    @Override
+    public long clearInsightCache() {
+        long removed = cacheClient.evictByPattern("ai:insight:*");
+        log.info("洞察缓存已主动失效, 删除 {} 个 key", removed);
+        return removed;
     }
 
     // ---------------- 规则分析 ----------------
